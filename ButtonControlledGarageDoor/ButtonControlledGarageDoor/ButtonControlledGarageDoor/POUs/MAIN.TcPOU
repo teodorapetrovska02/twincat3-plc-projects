@@ -1,0 +1,86 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{2ab1ecab-a5d6-4391-ae6b-452479dcbb66}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbGarage1 : FB_DoorController;
+	bActuation1 : BOOL;
+	bOpenButton1 : BOOL;
+	bCloseButton1 : BOOL;
+	bDriveOverload1 : BOOL; 
+	dwLightDelay1 : DWORD := 1000;
+	dwBlinkingTimeOn1 : DWORD := 500;
+	dwBlinkingTimeOff1 : DWORD := 250;
+	bDoorLight1 : BOOL;
+	bOpeningLight1 : BOOL;
+	bClosingLight1 : BOOL;
+	bNoError1 : BOOL;
+	sErrorMessage1 : STRING;
+	
+	fbGarage2 : FB_DoorController;
+	bActuation2 : BOOL;
+	bOpenButton2 : BOOL;
+	bCloseButton2 : BOOL;
+	bDriveOverload2 : BOOL; 
+	dwLightDelay2 : DWORD := 1000;
+	dwBlinkingTimeOn2 : DWORD := 500;
+	dwBlinkingTimeOff2 : DWORD := 250;
+	bDoorLight2 : BOOL;
+	bOpeningLight2 : BOOL;
+	bClosingLight2 : BOOL;
+	bNoError2 : BOOL;
+	sErrorMessage2 : STRING;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbGarage1(bActuation := bActuation1, 
+		  bOpenButton := bOpenButton1, 
+		  bCloseButton := bCloseButton1, 
+		  bDriveOverload := bDriveOverload1,
+		  dwLightDelay := dwLightDelay1,
+		  dwBlinkingTimeOn := dwBlinkingTimeOn1,
+		  dwBlinkingTimeOff := dwBlinkingTimeOff1,
+		  bDoorLight => bDoorLight1, 
+		  bOpeningLight => bOpeningLight1, 
+		  bClosingLight => bClosingLight1,
+		  bNoError => bNoError1,
+		  sErrorMessage => sErrorMessage1); 
+		  
+fbGarage2(bActuation := bActuation2, 
+		  bOpenButton := bOpenButton2, 
+		  bCloseButton := bCloseButton2, 
+		  bDriveOverload := bDriveOverload2,
+		  dwLightDelay := dwLightDelay2,
+		  dwBlinkingTimeOn := dwBlinkingTimeOn2,
+		  dwBlinkingTimeOff := dwBlinkingTimeOff2,
+		  bDoorLight => bDoorLight2, 
+		  bOpeningLight => bOpeningLight2, 
+		  bClosingLight => bClosingLight2,
+		  bNoError => bNoError2,
+		  sErrorMessage => sErrorMessage2); 		  ]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="2" Count="0" />
+      <LineId Id="52" Count="0" />
+      <LineId Id="24" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="60" Count="0" />
+      <LineId Id="64" Count="1" />
+      <LineId Id="25" Count="0" />
+      <LineId Id="54" Count="1" />
+      <LineId Id="104" Count="0" />
+      <LineId Id="98" Count="0" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="30" Count="0" />
+      <LineId Id="56" Count="0" />
+      <LineId Id="31" Count="0" />
+      <LineId Id="57" Count="0" />
+      <LineId Id="70" Count="1" />
+      <LineId Id="69" Count="0" />
+      <LineId Id="29" Count="0" />
+      <LineId Id="58" Count="1" />
+      <LineId Id="105" Count="0" />
+      <LineId Id="101" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

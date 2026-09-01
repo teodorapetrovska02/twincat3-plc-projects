@@ -1,0 +1,59 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_TimedButton" Id="{1061c217-a255-481c-86c6-ed62e22d1040}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TimedButton
+VAR_INPUT
+	bIsTimeButtonPressed : BOOL;
+	tMaxTime : TIME;	// Maximum time to hold the button before swithing lights
+END_VAR
+VAR_OUTPUT
+	bLightOfTimedButton : BOOL;
+	bLightOfOtherButton : BOOL;
+END_VAR
+VAR
+	fbTimerForTimedButton : TON;	// For timing the button press
+	tTimePressed : DWORD;
+	
+	sMaxTime : DWORD := 3000;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bIsTimeButtonPressed  THEN	// Check if the time button is pressed
+	tMaxTime := DWORD_TO_TIME(sMaxTime);
+	fbTimerForTimedButton(IN := TRUE, PT := tMaxTime);	// Start the timer
+	tTimePressed := TIME_TO_DWORD(fbTimerForTimedButton.ET);
+	// If timer hasn't reached max time, turn on first light, ensure second light is off
+	IF NOT fbTimerForTimedButton.Q THEN
+		bLightOfTimedButton := TRUE;
+		bLightOfOtherButton := FALSE;
+	// If timer has reached max time, turn off first light, turn on second light
+	ELSE
+		bLightOfTimedButton := FALSE;
+		bLightOfOtherButton := TRUE;
+	END_IF
+ELSE	// Button is not pressed
+	fbTimerForTimedButton(IN := FALSE);	// Reset the timer
+	// Both lights should be off
+	bLightOfTimedButton := FALSE;
+	bLightOfOtherButton := FALSE;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TimedButton">
+      <LineId Id="25" Count="0" />
+      <LineId Id="92" Count="0" />
+      <LineId Id="46" Count="0" />
+      <LineId Id="91" Count="0" />
+      <LineId Id="72" Count="0" />
+      <LineId Id="48" Count="1" />
+      <LineId Id="68" Count="0" />
+      <LineId Id="73" Count="0" />
+      <LineId Id="27" Count="1" />
+      <LineId Id="51" Count="2" />
+      <LineId Id="69" Count="0" />
+      <LineId Id="74" Count="0" />
+      <LineId Id="54" Count="0" />
+      <LineId Id="70" Count="0" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

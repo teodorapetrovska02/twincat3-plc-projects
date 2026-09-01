@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_ButtonT" Id="{b6687925-778f-4d86-8851-be84c39ba107}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ButtonT
+VAR_INPUT
+	bIsButtonOn : BOOL;
+	bIsButtonOff : BOOL;
+END_VAR
+VAR_OUTPUT
+	bActivate : BOOL;
+END_VAR
+VAR
+	fbOn_RTRIG : R_TRIG;
+	fbOff_RTRIG : R_TRIG;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// One button turns the light on, the other turns it off
+IF bIsButtonOn THEN
+	bActivate := TRUE;
+	bIsButtonOff := FALSE;
+END_IF
+
+IF bIsButtonOff THEN
+	bActivate := FALSE;
+	bIsButtonOn := FALSE;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_ButtonT">
+      <LineId Id="36" Count="8" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,52 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{e6185a54-c4af-47d3-ae59-1f98a04e34e8}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	
+	fbMyPizzaOven : ARRAY[0..MAX_OVENS] OF FB_PizzaOven;	// My instance of oven 1
+	
+	bLoadPizza : BOOL;	// Put a pizza on the input side
+	bRemovePizza : BOOL;	// Take pizza off output side
+	
+	i : DINT;
+	
+	fbMyTimer : TON;
+	
+	fbNT_GetTime: NT_GetTime;
+
+END_VAR
+
+VAR CONSTANT
+	MAX_OVENS : DINT := 1; // This is 2 because the array starts at 0
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[FOR i:= 0 TO MAX_OVENS DO
+	fbMyPizzaOven[i](bLoadPizza:=bLoadPizza, bRemovePizza:=bRemovePizza);
+END_FOR
+
+fbMyTimer(IN:=NOT fbMyTimer.Q, PT:=T#100MS);
+
+fbNT_GetTime(
+	NETID := '',
+	START := fbMyTimer.Q,
+	TIMESTR => hmi_vars.stCurrentTime);
+	
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="66" Count="0" />
+      <LineId Id="54" Count="0" />
+      <LineId Id="67" Count="0" />
+      <LineId Id="101" Count="0" />
+      <LineId Id="100" Count="0" />
+      <LineId Id="86" Count="3" />
+      <LineId Id="91" Count="0" />
+      <LineId Id="85" Count="0" />
+      <LineId Id="69" Count="0" />
+      <LineId Id="68" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

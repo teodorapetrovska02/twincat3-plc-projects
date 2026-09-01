@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{de73dcfc-be11-4121-8cb0-5c8df10a409c}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	bIsStartPressed : BOOL;
+	bIsStopPressed : BOOL;
+	bIsBlinkPressed : BOOL;
+
+	fbTrafficLight : FB_TrafficLight;
+	
+	dwRedTimeOn : DWORD := 8000;
+	
+	dwRedAndYellowTimeOn : DWORD := 1000;
+	
+	dwGreenTimeOn : DWORD := 5000;
+	
+	dwGreenBlinkingDuration : DWORD := 2000;
+	dwGreenBlinkingTimeOn : DWORD := 250;
+	dwGreenBlinkingTimeOff : DWORD := 100;
+	
+	dwYellowTimeOn : DWORD := 1000;
+	
+	dwYellowBlinkingTimeOn : DWORD := 250;
+	dwYellowBlinkingTimeOff : DWORD := 100;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbTrafficLight(bIsStartPressed := bIsStartPressed, bIsStopPressed := bIsStopPressed, bIsBlinkPressed := bIsBlinkPressed,
+			   dwRedTimeOn := dwRedTimeOn,
+			   dwRedAndYellowTimeOn := dwRedAndYellowTimeOn, 
+			   dwGreenTimeOn := dwGreenTimeOn,
+			   dwGreenBlinkingDuration := dwGreenBlinkingDuration, dwGreenBlinkingTimeOn := dwGreenBlinkingTimeOn, dwGreenBlinkingTimeOff := dwGreenBlinkingTimeOff,
+			   dwYellowTimeOn := dwYellowTimeOn,
+			   dwYellowBlinkingTimeOn := dwYellowBlinkingTimeOn, dwYellowBlinkingTimeOff := dwYellowBlinkingTimeOff,);		   
+			   
+//// For connection with hardware
+//fbTrafficLight(dwRedTimeOn := dwRedTimeOn,
+//			   dwRedAndYellowTimeOn := dwRedAndYellowTimeOn, 
+//			   dwGreenTimeOn := dwGreenTimeOn,
+//			   dwGreenBlinkingDuration := dwGreenBlinkingDuration, dwGreenBlinkingTimeOn := dwGreenBlinkingTimeOn, dwGreenBlinkingTimeOff := dwGreenBlinkingTimeOff,
+//			   dwYellowTimeOn := dwYellowTimeOn,
+//			   dwYellowBlinkingTimeOn := dwYellowBlinkingTimeOn, dwYellowBlinkingTimeOff := dwYellowBlinkingTimeOff,);			  ]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="2" Count="0" />
+      <LineId Id="82" Count="0" />
+      <LineId Id="46" Count="0" />
+      <LineId Id="45" Count="0" />
+      <LineId Id="60" Count="0" />
+      <LineId Id="21" Count="1" />
+      <LineId Id="111" Count="1" />
+      <LineId Id="115" Count="0" />
+      <LineId Id="117" Count="3" />
+      <LineId Id="114" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

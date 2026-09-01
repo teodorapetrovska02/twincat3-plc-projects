@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{123b3537-2b46-43a3-a8d2-3b8e902ef314}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbBlinker : FB_Blinker;
+	fbCaseBlinker : FB_CaseBlinker;
+	
+	bIsStartPressed : BOOL;
+	bIsCaseStartPressed : BOOL;
+	
+	dwTimeOn : DWORD := 2000;
+	dwTimeOff : DWORD := 1000;
+	dwCaseTimeOn : DWORD := 2000;
+	dwCaseTimeOff : DWORD := 1000;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbBlinker(bIsStartPressed := bIsStartPressed, dwTimeOn := dwTimeOn, dwTimeOff := dwTimeOff);
+
+fbCaseBlinker(bIsStartPressed := bIsCaseStartPressed, dwTimeOn := dwCaseTimeOn, dwTimeOff := dwCaseTimeOff);
+
+fbCaseBlinker(dwTimeOn := dwCaseTimeOn, dwTimeOff := dwCaseTimeOff);]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="2" Count="0" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="11" Count="0" />
+      <LineId Id="27" Count="0" />
+      <LineId Id="26" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

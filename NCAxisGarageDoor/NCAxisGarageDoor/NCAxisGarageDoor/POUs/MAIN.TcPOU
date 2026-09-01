@@ -1,0 +1,42 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{9bb77c13-f376-41a8-bc77-df04b16c0133}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbGarage1 : FB_DoorController;
+	bActuation1 : BOOL;
+	fMaxPosition1 : LREAL := 100;
+	bDriveOverload1 : BOOL; 
+	dwLightDelay1 : DWORD := 1000;
+	dwBlinkingTimeOn1 : DWORD := 500;
+	dwBlinkingTimeOff1 : DWORD := 250;
+	fActualPosition1 : LREAL;
+	bDoorLight1 : BOOL;
+	bOpeningLight1 : BOOL;
+	bClosingLight1 : BOOL;
+	bNoError1 : BOOL;
+	sErrorMessage1 : STRING;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbGarage1(bActuation := bActuation1, 
+		  fMaxPosition := fMaxPosition1,
+		  bDriveOverload := bDriveOverload1,
+		  dwLightDelay := dwLightDelay1,
+		  dwBlinkingTimeOn := dwBlinkingTimeOn1,
+		  dwBlinkingTimeOff := dwBlinkingTimeOff1,
+		  fActualPosition => fActualPosition1,
+		  bDoorLight => bDoorLight1, 
+		  bOpeningLight => bOpeningLight1, 
+		  bClosingLight => bClosingLight1,
+		  bNoError => bNoError1,
+		  sErrorMessage => sErrorMessage1);]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="34" Count="0" />
+      <LineId Id="92" Count="0" />
+      <LineId Id="37" Count="3" />
+      <LineId Id="89" Count="0" />
+      <LineId Id="41" Count="4" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

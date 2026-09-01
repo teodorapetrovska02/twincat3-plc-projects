@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="E_BlinkerPhase" Id="{9588a83d-be41-4b08-9feb-9740d02fdf0c}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_BlinkerPhase :
+(
+	IdlePhase := 0,
+	OnPhase := 10,
+	OffPhase := 20
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

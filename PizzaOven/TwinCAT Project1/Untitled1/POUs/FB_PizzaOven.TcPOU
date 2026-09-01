@@ -1,0 +1,155 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_PizzaOven" Id="{5c55f55f-47e0-45bd-aa5b-72804a871bfe}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_PizzaOven
+VAR_INPUT
+	
+	bLoadPizza : BOOL;	// Put a pizza on the input side
+	bRemovePizza : BOOL;	// Take pizza off output side
+
+END_VAR
+VAR_OUTPUT
+
+	bBuzzer : BOOL;
+	bLight : BOOL;
+
+	iTotalPizzasCooked : UDINT;
+
+END_VAR
+VAR
+	
+	stCurrentTime : TIMESTRUCT;
+	dtCurrentTime : DT;
+
+	fbLoad_RTRIG : R_TRIG;
+	fbRemove_RTRIG : R_TRIG;	
+
+	stPizzaOnDeck : ST_PIZZA;	// Location of possible pizza
+	stPizzaInOven : ST_PIZZA;
+	stPizzaDone : ST_PIZZA;
+	
+	// timers
+	fbMyTimer : TON;	// My timer... for stuff.
+
+	iState : DINT;
+	ILastState : DINT;
+	sStateDesc : STRING;
+	arrStateDescHistory : ARRAY[1..100] OF STRING;
+	
+	bStartButton: BOOL;
+	arrPizzaHistory: BYTE;
+	TIMESTR: STRING(INT#4);
+END_VAR
+VAR CONSTANT
+	stNULL_PIZZA : ST_PIZZA;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[dtCurrentTime := SYSTEMTIME_TO_DT(stCurrentTime);
+
+// If there is room
+IF stPizzaOnDeck.bExist AND NOT stPizzaInOven.bExist THEN
+	stPizzaInOven := stPizzaOnDeck;
+	stPizzaOnDeck := stNULL_PIZZA;	// Remove pizza
+END_IF
+
+fbLoad_RTRIG(clk := bLoadPizza);
+IF fbLoad_RTRIG.Q THEN
+	stPizzaOnDeck.bExist := TRUE;
+	stPizzaOnDeck.eType := 2;	// Olives
+END_IF
+
+fbRemove_RTRIG(clk := bRemovePizza);
+IF fbRemove_RTRIG.Q THEN
+	//F_FIFO_WRITE(cbData := SIZEOF(stPizzaDone), pData := ADR(stPizzaDone),
+	//				cbBuffer := SIZEOF(arrPizzaHistory), pBuffer := ADR(arrPizzaHistory)
+	//);	//It gives an error for arrPizzaHistory, I don't know how to fix it
+	stPizzaDone := stNULL_PIZZA;
+END_IF
+
+CASE iState OF
+	0:	// Wait for pizza in oven
+		sStateDesc := 'Waiting on pizza now.';
+		IF stPizzaInOven.bExist THEN
+			stPizzaInOven.dtTimeEnteredOven := dtCurrentTime;
+			iState := 10;
+		END_IF
+	10:	// We just got a pizza!
+		sStateDesc := 'Baking that pizza now.';
+		fbMyTimer(IN:=TRUE, PT:=T#3S);
+		
+		IF fbMyTimer.Q THEN
+			fbMyTimer(IN:=FALSE);
+			iState := 20;
+		END_IF
+	20:	// Can we move the pizza out of the oven? It's going to burn!
+		IF NOT stPizzaDone.bExist THEN
+			// Simulate conveyor
+			stPizzaInOven.dtTimeExitedOven := dtCurrentTime;
+			stPizzaDone := stPizzaInOven;
+			stPizzaInOven := stNULL_PIZZA;
+			bBuzzer := FALSE;
+			iState := 30;
+		ELSE
+			bBuzzer := TRUE;
+			sStateDesc := 'The pizza is burning!';
+		END_IF
+	30:	// Pizza just removed on output tray
+		stPizzaInOven.tTimeInOven := stPizzaInOven.dtTimeExitedOven - stPizzaInOven.dtTimeEnteredOven;
+		iTotalPizzasCooked := iTotalPizzasCooked + 1;
+		iState := 0;	// Go wait for new pizza in oven!
+ELSE
+	sStateDesc := 'Invalid state!';
+END_CASE
+
+// Start state history
+
+IF iLastState <> iState THEN
+	// Do stuff here to log transitions...
+	F_FIFO_WRITE(cbData := SIZEOF(sStateDesc), pData := ADR(sStateDesc),
+					cbBuffer := SIZEOF(arrStateDescHistory), pBuffer := ADR(arrStateDescHistory)
+	);
+	// ^^ SIZEOF returns the count in bytes
+	
+	// Reset for next time
+	iLastState := iState;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_PizzaOven">
+      <LineId Id="283" Count="0" />
+      <LineId Id="278" Count="0" />
+      <LineId Id="49" Count="1" />
+      <LineId Id="135" Count="0" />
+      <LineId Id="138" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="126" Count="0" />
+      <LineId Id="54" Count="1" />
+      <LineId Id="57" Count="0" />
+      <LineId Id="176" Count="0" />
+      <LineId Id="58" Count="0" />
+      <LineId Id="128" Count="0" />
+      <LineId Id="59" Count="1" />
+      <LineId Id="225" Count="1" />
+      <LineId Id="192" Count="0" />
+      <LineId Id="62" Count="6" />
+      <LineId Id="327" Count="0" />
+      <LineId Id="69" Count="12" />
+      <LineId Id="328" Count="0" />
+      <LineId Id="83" Count="0" />
+      <LineId Id="141" Count="0" />
+      <LineId Id="84" Count="6" />
+      <LineId Id="329" Count="0" />
+      <LineId Id="91" Count="3" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="179" Count="0" />
+      <LineId Id="178" Count="0" />
+      <LineId Id="181" Count="0" />
+      <LineId Id="180" Count="0" />
+      <LineId Id="184" Count="0" />
+      <LineId Id="188" Count="0" />
+      <LineId Id="190" Count="1" />
+      <LineId Id="189" Count="0" />
+      <LineId Id="185" Count="1" />
+      <LineId Id="182" Count="1" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

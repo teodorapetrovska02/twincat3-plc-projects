@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <GVL Name="HMI_VARS" Id="{ad932193-2a42-4689-bfbe-15828530fc0f}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+	iState : DINT;
+	bStartButton : BOOL;
+	
+	arrPizzaHistory : ARRAY[0..100] OF ST_PIZZA;	
+	
+	fbNT_GetTime: NT_GetTime;
+	stCurrentTime : TIMESTRUCT;
+	
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

@@ -1,0 +1,34 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="F_FIFO_WRITE" Id="{103fa203-ede2-444a-974a-75218e06182e}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_FIFO_WRITE : BOOL
+VAR_INPUT
+	cbData : UDINT;	// Stuff coming in (length of one data element)
+	pData : POINTER TO BYTE;
+	
+	cbBuffer : UDINT;	// Where all the stuff lives
+	pBuffer : POINTER TO BYTE;	// first bit
+END_VAR
+VAR
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Logic behind pDest, pBuffer tells us where we are in the memory, cbData tells us the type,
+// for example if it's a UDINT then cbData is gonna be 4 bytes, so if we add up where we are and cbData,
+// we get where we wanna be
+FW_MemMove(pDest := pBuffer + cbData, pSrc := pBuffer, cbLen := cbBuffer - cbData);	
+// ^^ Take everything and move it down (memory wise)
+
+FW_MemMove(pDest := pBuffer, pSrc := pData, cbLen := cbData);
+// ^^ Place in the first row (memory wise) - user provided]]></ST>
+    </Implementation>
+    <LineIds Name="F_FIFO_WRITE">
+      <LineId Id="12" Count="2" />
+      <LineId Id="7" Count="0" />
+      <LineId Id="17" Count="0" />
+      <LineId Id="16" Count="0" />
+      <LineId Id="15" Count="0" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

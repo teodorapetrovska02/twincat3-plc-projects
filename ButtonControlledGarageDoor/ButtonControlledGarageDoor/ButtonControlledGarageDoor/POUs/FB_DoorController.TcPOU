@@ -1,0 +1,405 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_DoorController" Id="{33a6d03e-9fae-457c-b126-b195db820562}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_DoorController
+VAR_INPUT
+	// Button that starts the door
+	bActuation : BOOL;
+	
+	// Buttons that open / close the door respectively
+	bOpenButton: BOOL;
+	bCloseButton : BOOL;
+	
+	// Button that makes the door go into a drive overload
+	bDriveOverload : BOOL;
+	
+	// How much time (in ms) should pass in order for the light to turn off when the door has opened / closed 
+	dwLightDelay : DWORD;
+	
+	// On/off times (in miliseconds) for when the garage door light is blinking in state of error
+	dwBlinkingTimeOn : DWORD;
+	dwBlinkingTimeOff : DWORD;
+END_VAR
+VAR_OUTPUT
+	// Outputs sent to actuators stating that the door is moving up / down
+	bDoorUp : BOOL;
+	bDoorDown : BOOL;
+	
+	// Indicates whether the door light should be on or off
+	bDoorLight : BOOL;
+	
+	// Lights that turn on if the door is opened / closed
+	bOpeningLight : BOOL;
+	bClosingLight : BOOL;
+	
+	// Variable that'll tell me if I'm in an error state or not
+	bNoError : BOOL := TRUE;
+	// Displaying a message according to the error we are encountering
+	sErrorMessage : STRING;
+END_VAR
+VAR
+	// Variables stating whether the door is opened or closed
+	bDoorOpen : BOOL;
+	bDoorClosed : BOOL := TRUE;	// Assumption that in the beginning the door is closed
+	
+	// TRUE when the process was paused during opening / closing
+	bPauseWhenOpening : BOOL;
+	bPauseWhenClosing : BOOL;
+
+	(* Timer needed for turning the door light off after a certain period of time passes 
+	after the door has been opened / closed *)
+	fbLightTimer : TON;
+	
+	// Trigger functions to deal with bouncing
+	fbActuation : R_TRIG;
+	fbOpenButton : R_TRIG;
+	fbCloseButton : R_TRIG;
+	fbDriveOverloadButton : R_TRIG;
+	
+	(* Instance of the BlinkingLight FB needed for the blinking of the actuation button 
+	when it goes to an error state *)
+	fbBlinkingLight : FB_BlinkingLight;
+	
+	// Variable needed for initializing the CASE structure states
+	nCurrentState : DINT;
+	
+	// Variables stating which errors we are encountering
+	bDriveError : BOOL;
+	bOpenError : BOOL; 
+	bCloseError : BOOL;
+	
+	(* Temporary variable that helps me overcome a problem I'm facing due to
+	   bOpenButton and bCloseButton being tappers *)
+	bPom : BOOL;
+	
+	// Variables needed only for the visualisation
+	Rect1 : BOOL;
+	Rect2 : BOOL;
+
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* This FB is intended to manage the operation of a garage door. It processes inputs
+   from various buttons (bActuation, bOpenButton, bCloseButton) and it handles drive
+   overloads (bDriveOverload). The block controls the movement of the door (bDoorUp,
+   bDoorDown), the activation of lights (bDoorLight, bOpeningLight, bClosingLight),
+   and transitions between different states (idle, opening, closing, error). The FB
+   also manages the timing for the door's lights, espeially when they need to blink
+   in case of errors. Additionally, it tracks whether the door is fully opened or
+   fully closed, handles pauses during opening or closing, and displays error messages
+   when needed. *)
+
+// Rising edge logic in order to stop bouncing (the signal persisting longer than intended)
+fbActuation(CLK := bActuation);
+bActuation := fbActuation.Q;
+fbOpenButton(CLK := bOpenButton);
+bOpenButton := fbOpenButton.Q;
+fbCloseButton(CLK := bCloseButton);
+bCloseButton := fbCloseButton.Q;
+fbDriveOverloadButton(CLK := bDriveOverload);
+bDriveOverload := fbDriveOverloadButton.Q;
+
+CASE nCurrentState OF
+	
+	0:	// Idle
+	(* The door is at rest. If the actuation button is pressed, the door either opens 
+	   (if closed) or closes (if open). It also checks for a drive overload to 
+	   transition into an error state. *)
+	
+	// If the overload sensor is activated, go to the error state
+	IF bDriveOverload THEN
+		nCurrentState := 999;
+	END_IF
+	
+	// Reseting
+	fbLightTimer.IN := FALSE;
+	bDoorLight := FALSE;
+	bOpeningLight := FALSE;
+	bClosingLight := FALSE;
+	
+	// If the actuation button is pressed and the door is closed -> open it
+	IF bActuation AND (bDoorClosed OR bPauseWhenClosing) THEN
+		nCurrentState := 100;
+	// If the actuation button is pressed and the door is opened -> close it
+	ELSIF bActuation AND (bDoorOpen OR bPauseWhenOpening) THEN
+		nCurrentState := 200;
+	END_IF
+	
+	100:	// Opening
+	(* The door is moving upwards. It activates the appropriate light and monitors for
+	   errors like drive overload or the close button being pressed. If the door reaches 
+	   the fully open position, it sets the bDoorOpen flag to TRUE, stops the opening 
+	   process, and returns to the idle state. If an error occurs, it pauses the opening 
+	   and transitions to the error state. *)
+	
+	(* If the overload sensor is activated or if the close button is pressed, go to the error state. 
+	   bPauseWhenClosing is true because I want to continue with opening after I get out of the error state *)
+	IF bDriveOverload OR bCloseButton THEN
+		IF bDriveOverload THEN
+			bdriveError := TRUE;	
+		ELSIF bCloseButton THEN
+			bCloseError := TRUE;
+		END_IF
+		
+		bPauseWhenOpening := FALSE;
+		bPauseWhenClosing := TRUE;
+		nCurrentState := 999;
+	END_IF
+	
+	// RESET EVERYTHING THAT'S GOTTA DO WITH CLOSING HERE
+	bDoorDown := FALSE;
+	bDoorClosed := FALSE;
+	
+	// State that the door should go up and turn the light on
+	bDoorUp := TRUE;
+	bDoorLight := TRUE;
+	bOpeningLight := TRUE;
+	
+	// Code needed only for the visualisation
+	Rect1 := TRUE;
+	
+	// Logic for opening
+	IF bOpenButton OR bPom THEN	
+		bPom := TRUE;
+		bDoorOpen := TRUE;
+		bPauseWhenClosing := FALSE;
+		bOpeningLight := FALSE;
+		
+		Rect2 := TRUE;	// Needed only for the visualization
+		
+		fbLightTimer.IN := TRUE;
+		IF fbLightTimer.Q THEN
+			bPom := FALSE;
+			bDoorLight := FALSE;
+			nCurrentState := 0;
+		END_IF		
+	END_IF
+	
+	// The opening is paused -> go to idle state
+	IF bActuation THEN
+		bPauseWhenOpening := TRUE;
+		bPauseWhenClosing := FALSE;
+		bOpeningLight := FALSE;
+	END_IF
+	
+	IF bPauseWhenOpening THEN
+		fbLightTimer.IN := TRUE;
+			IF fbLightTimer.Q THEN
+				bDoorLight := FALSE;
+				nCurrentState := 0;
+			END_IF
+	END_IF
+	
+	200:	// Closing
+	(* The door is moving downwards. It manages the closing light and checks for errors
+	   such as the open button being pressed or a drive overload. If the door reaches the 
+	   fully closed position, it sets the bDoorClosed flag to TRUE, stops the closing 
+	   process, and returns to the idle state. Similar to the opening state, any error 
+	   pauses the closing process and transitions to the error state. *)
+	
+	(* If the overload sensor is activated or if the open button is pressed, go to the error state. 
+	   bPauseWhenOpening is true because I want to continue with closing after I get out of the error state *)
+	IF bDriveOverload OR bOpenButton THEN
+		IF bDriveOverload THEN
+			bdriveError := TRUE;	
+		ELSIF bOpenButton THEN
+			bOpenError := TRUE;
+		END_IF
+		
+		bPauseWhenOpening := TRUE;
+		bPauseWhenClosing := FALSE;
+		nCurrentState := 999;
+	END_IF
+	
+	// RESET EVERYTHING THAT'S GOTTA DO WITH OPENING HERE
+	bDoorUp := FALSE;
+	bDoorOpen := FALSE;
+	
+	// State that the door should go down and turn the light on
+	bDoorDown := TRUE;
+	bDoorLight := TRUE;
+	bClosingLight := TRUE;
+	
+	// Code needed only for the visualisation
+	Rect2 := FALSE;
+	
+	// Logic for closing
+	IF bCloseButton OR bPom THEN
+		bPom := TRUE;
+		bDoorClosed := TRUE;
+		bPauseWhenOpening := FALSE;
+		bClosingLight := FALSE;
+		
+		Rect1 := FALSE;	// Needed only for the visualization
+		
+		fbLightTimer.IN := TRUE;
+		IF fbLightTimer.Q THEN
+			bPom := FALSE;
+			bDoorLight := FALSE;
+			nCurrentState := 0;
+		END_IF
+	END_IF
+	
+	// The closing is paused -> go to idle state
+	IF bActuation THEN
+		bPauseWhenClosing := TRUE;
+		bPauseWhenOpening := FALSE;
+		bClosingLight := FALSE;
+	END_IF
+	
+	IF bPauseWhenClosing THEN
+		fbLightTimer.IN := TRUE;
+			IF fbLightTimer.Q THEN
+				bDoorLight := FALSE;
+				nCurrentState := 0;
+			END_IF
+	END_IF
+	
+	999:	// Error
+	(* The system has detected an error, such as a drive overload or conflicting 
+	   open/close commands. The door movement stops, and the light blinks to indicate 
+	   the error. The state persists until the actuation button is pressed again, 
+	   resetting the system and returning to idle. Error messages are displayed based 
+	   on the specific error encountered. *)
+	
+	bNoError := FALSE;
+	
+	IF bActuation THEN
+		bNoError := TRUE;
+		nCurrentState := 0;
+	END_IF
+	
+	fbBlinkingLight(dwTimeOn :=  dwBlinkingTimeOn, dwTimeOff := dwBlinkingTimeOff, bLight => bDoorLight);
+	
+	// WRITE LOGIC TO STOP THE WHOLE PROCESS HERE (RESET EVERYTHING)
+	bDoorUp := FALSE;
+	bDoorDown := FALSE;
+	
+	// Write error messages for the appropriate errors
+	IF bDriveError THEN
+		bDriveError := FALSE;
+		sErrorMessage := 'Error ID XXXX: Drive overload!';
+	END_IF
+	
+	IF bOpenError THEN
+		bOpenError := FALSE;
+		sErrorMessage := 'Error ID XXXX: Trying to open the door while it is in a process of closing!';
+	END_IF
+	
+	IF bCloseError THEN
+		bCloseError := FALSE;
+		sErrorMessage := 'Error ID XXXX: Trying to close the door while it is in a process of opening!';
+	END_IF
+	
+END_CASE
+
+fbLightTimer(PT := TO_TIME(dwLightDelay));
+
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_DoorController">
+      <LineId Id="694" Count="0" />
+      <LineId Id="710" Count="6" />
+      <LineId Id="709" Count="0" />
+      <LineId Id="695" Count="0" />
+      <LineId Id="125" Count="2" />
+      <LineId Id="431" Count="0" />
+      <LineId Id="430" Count="0" />
+      <LineId Id="433" Count="0" />
+      <LineId Id="432" Count="0" />
+      <LineId Id="562" Count="0" />
+      <LineId Id="561" Count="0" />
+      <LineId Id="128" Count="3" />
+      <LineId Id="718" Count="0" />
+      <LineId Id="722" Count="1" />
+      <LineId Id="132" Count="5" />
+      <LineId Id="603" Count="0" />
+      <LineId Id="140" Count="1" />
+      <LineId Id="441" Count="1" />
+      <LineId Id="142" Count="9" />
+      <LineId Id="724" Count="1" />
+      <LineId Id="734" Count="2" />
+      <LineId Id="152" Count="1" />
+      <LineId Id="479" Count="0" />
+      <LineId Id="154" Count="0" />
+      <LineId Id="570" Count="0" />
+      <LineId Id="572" Count="0" />
+      <LineId Id="564" Count="0" />
+      <LineId Id="504" Count="0" />
+      <LineId Id="565" Count="0" />
+      <LineId Id="569" Count="0" />
+      <LineId Id="155" Count="1" />
+      <LineId Id="158" Count="1" />
+      <LineId Id="464" Count="0" />
+      <LineId Id="166" Count="2" />
+      <LineId Id="170" Count="3" />
+      <LineId Id="417" Count="0" />
+      <LineId Id="174" Count="1" />
+      <LineId Id="187" Count="2" />
+      <LineId Id="418" Count="0" />
+      <LineId Id="449" Count="0" />
+      <LineId Id="423" Count="1" />
+      <LineId Id="443" Count="0" />
+      <LineId Id="435" Count="1" />
+      <LineId Id="420" Count="0" />
+      <LineId Id="199" Count="1" />
+      <LineId Id="450" Count="0" />
+      <LineId Id="201" Count="2" />
+      <LineId Id="419" Count="0" />
+      <LineId Id="205" Count="2" />
+      <LineId Id="209" Count="1" />
+      <LineId Id="446" Count="0" />
+      <LineId Id="212" Count="10" />
+      <LineId Id="727" Count="1" />
+      <LineId Id="737" Count="2" />
+      <LineId Id="223" Count="0" />
+      <LineId Id="471" Count="0" />
+      <LineId Id="478" Count="0" />
+      <LineId Id="473" Count="0" />
+      <LineId Id="574" Count="3" />
+      <LineId Id="566" Count="0" />
+      <LineId Id="578" Count="0" />
+      <LineId Id="474" Count="3" />
+      <LineId Id="231" Count="0" />
+      <LineId Id="237" Count="2" />
+      <LineId Id="439" Count="0" />
+      <LineId Id="242" Count="2" />
+      <LineId Id="434" Count="0" />
+      <LineId Id="245" Count="1" />
+      <LineId Id="258" Count="2" />
+      <LineId Id="262" Count="0" />
+      <LineId Id="451" Count="0" />
+      <LineId Id="263" Count="1" />
+      <LineId Id="444" Count="0" />
+      <LineId Id="437" Count="1" />
+      <LineId Id="269" Count="2" />
+      <LineId Id="452" Count="0" />
+      <LineId Id="272" Count="6" />
+      <LineId Id="280" Count="1" />
+      <LineId Id="445" Count="0" />
+      <LineId Id="283" Count="10" />
+      <LineId Id="730" Count="3" />
+      <LineId Id="740" Count="0" />
+      <LineId Id="685" Count="1" />
+      <LineId Id="294" Count="1" />
+      <LineId Id="690" Count="0" />
+      <LineId Id="296" Count="7" />
+      <LineId Id="480" Count="2" />
+      <LineId Id="579" Count="0" />
+      <LineId Id="682" Count="0" />
+      <LineId Id="484" Count="0" />
+      <LineId Id="487" Count="1" />
+      <LineId Id="502" Count="0" />
+      <LineId Id="688" Count="0" />
+      <LineId Id="490" Count="2" />
+      <LineId Id="503" Count="0" />
+      <LineId Id="689" Count="0" />
+      <LineId Id="494" Count="0" />
+      <LineId Id="304" Count="1" />
+      <LineId Id="356" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="605" Count="1" />
+      <LineId Id="604" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

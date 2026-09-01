@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_PressedButton" Id="{ba9c4601-6d6c-4137-b66e-50138fd94acc}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_PressedButton
+VAR_INPUT
+	bIsButtonPressed : BOOL;
+END_VAR
+VAR_OUTPUT
+	bLightOfPressedButton : BOOL;
+END_VAR
+VAR
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// As long as the button is pressed the light is on, when it's not pressed, light turns off
+IF bIsButtonPressed THEN
+	bLightOfPressedButton := TRUE;
+ELSE
+	bLightOfPressedButton := FALSE;
+END_IF
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_PressedButton">
+      <LineId Id="35" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="14" Count="0" />
+      <LineId Id="24" Count="1" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="45" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

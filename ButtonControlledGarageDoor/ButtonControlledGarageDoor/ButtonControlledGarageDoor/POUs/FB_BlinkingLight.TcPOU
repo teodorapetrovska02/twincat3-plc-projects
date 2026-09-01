@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_BlinkingLight" Id="{75d1f6e3-b2de-4131-9ab0-d9802e72243d}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_BlinkingLight
+VAR_INPUT
+	dwTimeOn : DWORD;
+	dwTimeOff : DWORD;
+END_VAR
+VAR_OUTPUT
+	bLight : BOOL;	// Determines whether the light will be ON or OFF
+END_VAR
+VAR
+	fbTimerOn : TON;
+	fbTimerOff : TON;
+	fbStartTrigger : R_TRIG;
+	
+	nCurrentPhase : INT := 10;	// 10 - ON, 20 - OFF
+	
+	bIsBlinking : bool;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE nCurrentPhase OF
+    10:	// ON
+        fbTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwTimeOn));
+        IF fbTimerOn.Q THEN
+            fbTimerOn(IN := FALSE); // Reset the on timer
+            nCurrentPhase := 20;  // Move to the off phase
+        END_IF
+        bLight := TRUE;
+
+    20:	// OFF
+        fbTimerOff(IN := TRUE, PT := DWORD_TO_TIME(dwTimeOff));
+        IF fbTimerOff.Q THEN
+            fbTimerOff(IN := FALSE); // Reset the off timer
+            nCurrentPhase := 10;  // Move to the On phase
+        END_IF
+        bLight := FALSE;
+		
+ELSE
+	fbTimerOn(IN := FALSE);
+    fbTimerOff(IN := FALSE);
+    bLight := FALSE;
+END_CASE]]></ST>
+    </Implementation>
+    <LineIds Name="FB_BlinkingLight">
+      <LineId Id="25" Count="20" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

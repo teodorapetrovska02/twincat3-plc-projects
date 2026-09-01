@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{55d44da9-eb34-4108-8f58-66e1bc97dfe1}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	// Instances of appropriate FBs
+	fbPressedButton : FB_PressedButton;
+	fbOnAndOffButtons : FB_OnAndOffButtons;
+	fbToggleButton : FB_ToggleButton;
+	fbTimedButton : FB_TimedButton;
+
+	// To know whether we've pressed certain buttons
+	bIsButtonPressed : BOOL;
+	bIsButtonOn : BOOL;
+	bIsButtonOff : BOOL;
+	bIsToggleButtonOn : BOOL;
+	bIsTimeButtonPressed : BOOL;
+END_VAR
+VAR CONSTANT
+	T_MAX_TIME : TIME;	// Max time for the timed button
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Calling of FBs with info we're getting from the buttons (whether they're being pressed or not)
+fbPressedButton(bIsButtonPressed := bIsButtonPressed);
+
+fbOnAndOffButtons(bIsButtonOn := bIsButtonOn, bIsButtonOff := bIsButtonOff);
+
+fbToggleButton(bIsToggleButtonOn := bIsToggleButtonOn);
+
+fbTimedButton(bIsTimeButtonPressed := bIsTimeButtonPressed, tMaxTime := T_MAX_TIME);]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="55" Count="0" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="21" Count="0" />
+      <LineId Id="20" Count="0" />
+      <LineId Id="38" Count="0" />
+      <LineId Id="23" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

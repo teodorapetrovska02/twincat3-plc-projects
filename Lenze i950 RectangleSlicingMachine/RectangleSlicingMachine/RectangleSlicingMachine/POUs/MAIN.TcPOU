@@ -1,0 +1,62 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="MAIN" Id="{186648fb-a59e-43ef-bf6a-958903ba5b89}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbSlicer : FB_Slicer;
+	bStartButton : BOOL;
+	bStopButton : BOOL;
+	bContinueButton : BOOL;
+	bHomeButton: BOOL;
+	bEnginesOnButton : BOOL;
+	bEnginesOffButton : BOOL;
+	aStartingPosition : ARRAY[0..1] OF LREAL;
+	aSlicingDimensions : ARRAY[0..1] OF LREAL;
+	fVelocityOverride : LREAL := 80;
+	fM1Position : LREAL;
+	fM1sPosition : LREAL;
+	fM2Position : LREAL;
+	bEnginesLight : BOOL;
+	bHomedLight : BOOL;
+	bSlicingLight : BOOL;
+	bStopLight : BOOL;
+	bErrorLight : BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbSlicer(bStartButton := bStartButton,
+		 bStopButton := bStopButton,
+		 bContinueButton := bContinueButton,
+		 bHomeButton := bHomeButton,
+		 bEnginesOnButton := bEnginesOnButton,
+		 bEnginesOffButton := bEnginesOffButton,
+		 aStartingPosition := aStartingPosition,
+		 aSlicingDimensions := aSlicingDimensions,
+		 fVelocityOverride := fVelocityOverride,
+		 fM1Position => fM1Position,
+		 fM1sPosition => fM1sPosition,
+		 fM2Position => fM2Position,
+		 bEnginesLight => bEnginesLight,
+		 bHomedLight => bHomedLight,
+		 bSlicingLight => bSlicingLight,
+		 bStopLight => bStopLight,
+		 bErrorLight => bErrorLight);
+		 
+//PRG_Test();]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="2" Count="0" />
+      <LineId Id="22" Count="0" />
+      <LineId Id="70" Count="0" />
+      <LineId Id="40" Count="0" />
+      <LineId Id="26" Count="1" />
+      <LineId Id="67" Count="1" />
+      <LineId Id="94" Count="0" />
+      <LineId Id="11" Count="2" />
+      <LineId Id="45" Count="2" />
+      <LineId Id="91" Count="0" />
+      <LineId Id="48" Count="0" />
+      <LineId Id="116" Count="1" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

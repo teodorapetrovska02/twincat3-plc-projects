@@ -1,0 +1,944 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_Slicer" Id="{b18080a6-620f-4bb6-8940-fe7a94d195be}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Slicer
+VAR_INPUT
+	// Buttons to control various actions
+	bStartButton : BOOL;
+	bStopButton : BOOL;
+	bContinueButton : BOOL;
+	bHomeButton: BOOL;	// Returns axes to 0
+	bEnginesOnButton : BOOL;
+	bEnginesOffButton : BOOL;
+	
+	// Coordinates for the slicing start position
+	aStartingPosition : ARRAY[0..1] OF LREAL;
+	// Dimensions of the rectangle to be sliced
+	aSlicingDimensions : ARRAY[0..1] OF LREAL;
+	
+	// Velocity override for motor movements
+	fVelocityOverride : LREAL;
+END_VAR
+VAR_OUTPUT
+	// Current positions of motors M1, M1s and M2
+	fM1Position : LREAL;
+	fM1sPosition : LREAL;
+	fM2Position : LREAL;
+	
+	//Lights
+	bEnginesLight : BOOL;	// On when the engines are on
+	bHomedLight : BOOL;		// On when the axes are homed
+	bSlicingLight : BOOL;	// On when slicing is happening
+	bStopLight : BOOL;		// On when the process is stopped
+	bErrorLight : BOOL;		// On when there's an error
+	
+	nErrorID : UDINT;
+END_VAR
+VAR
+	// Trigger functions to stop bouncing when any of the buttons are pressed
+	fbStartButtonTrigger : R_TRIG;
+	fbStopButtonTrigger : R_TRIG;
+	fbContinueButtonTrigger : R_TRIG;
+	fbHomeButtonTrigger : R_TRIG;
+	fbEnginesOnButtonTrigger : R_TRIG;
+	fbEnginesOffButtonTrigger : R_TRIG;
+	
+	// References to the axes
+	AxisM1 : AXIS_REF;	// Master
+	AxisM1s : AXIS_REF;	// Slave
+	AxisM2 : AXIS_REF;
+	
+	// Adequate function blocks needed for the axes
+	M1McPower : MC_Power;
+	M1McMoveRelative : MC_MoveRelative;
+	M1McHome : MC_Home;
+	M1McReset : MC_Reset;
+	M1McStop : MC_Stop;
+	
+	M1sMcPower : MC_Power;
+	M1sMcMoveRelative : MC_MoveRelative;
+	M1sMcHome : MC_Home;
+	M1sMcSetPosition : MC_SetPosition;
+	M1sMcReset : MC_Reset;
+	M1sMcStop : MC_Stop;
+	
+	M2McPower : MC_Power;
+	M2McMoveRelative : MC_MoveRelative;
+	M2McHome : MC_Home;
+	M2McReset : MC_Reset;
+	M2McStop : MC_Stop;
+	
+	// FBs needed to synchronise and desynchronize M1s to M1
+	McGearIn : MC_GearIn;
+	McGearOut : MC_GearOut;
+	
+	// Variable to tell us if the axes are homed or not
+	bHomed : BOOL;
+	
+	// Variable to tell us if the engines are on or off (TRUE - ON, FALSE - OFF)
+	bPowerStatus : BOOL;
+	
+	// Variable to tell us if M1 and M1s are coupled or not
+	bCoupled  : BOOL;
+	
+	// Variable to tell us if the return button is pressed
+	bReturned : BOOL;
+	
+	(* Variable to tell us if the user has given all coordinates needed (starting position and
+	   rectangle dimensions) in order for the machine to be able to start *)
+	bCoordinates : BOOL;
+	
+	// Variable to tell us if the dimensions we've given make the machine go out of bounds
+	bLimit : BOOL;
+	
+	// Slicing dimensions 
+	fM1SlicingDistance : LREAL;
+	fM2SlicingDistance : LREAL;
+	// Starting point dimensions
+	fM1StartingDistance : LREAL;
+	fM2StartingDistance : LREAL;
+	
+	// Variables used to keep track of the state in which we stopped and update the dimensions
+	nStoppedState : DINT;
+	fTempM1SlicingDistance : LREAL;
+	fTempM2SlicingDistance : LREAL;
+	fTempM1StartingDistance : LREAL;
+	fTempM2StartingDistance : LREAL;
+
+	
+	// Variable needed for initializing the CASE structure states
+	nCurrentState : DINT;
+	
+END_VAR
+
+VAR CONSTANT
+	// Define limits
+	MINIMUM_STARTING_POSITION : UINT := 10;
+	MAXIMUM_SLICING_DIMENSION : UINT := 80;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* This FB deals with controlling a machine that's got 3 motors with incremental encoders. Two of them (M1 & M1s) 
+   function synchronous moving a slicer on the y axis whereas the third one (M2) moves the slicer on the x axis. 
+   M1 & M1s have a master - slave configuration. The idea is that the machine will be used to cut rectangles with 
+   dimensions given by the user, so what we want to do is to home the axes, take the slicer to a predefined 
+   position where we want the slicing to start and cut out a rectangle by moving M1 & M1s synchronously positive 
+   the y axis, then M2 in a positive direction on the x axis, then M1 & M1s negative y and then M2 negative x. 
+   The machine operates within a 100x100cm workspace, which necessitates setting boundaries to avoid exceeding the 
+   machine's limits. To ensure a safe margin, I've established a 10 cm buffer on all sides. So, the minimum starting
+   position for any operation is (10,10) cm. Based on this configuration, the largest rectangle the machine can 
+   safely cut is 80x80cm without crossing the predefined boundaries.*)
+   
+   
+CASE nCurrentState OF
+	0:	// Power OFF
+	bEnginesLight := FALSE;
+	bPowerStatus := FALSE;
+
+	M1McPower.Enable := FALSE;
+	M1McPower.Enable_Positive := FALSE;
+	M1McPower.Enable_Negative := FALSE;
+	M1McPower.Override := fVelocityOverride;
+	
+	M1sMcPower.Enable := FALSE;
+	M1sMcPower.Enable_Positive := FALSE;
+	M1sMcPower.Enable_Negative := FALSE;
+	M1sMcPower.Override := fVelocityOverride;
+	
+	M2McPower.Enable := FALSE;
+	M2McPower.Enable_Positive := FALSE;
+	M2McPower.Enable_Negative := FALSE;
+	M2McPower.Override := fVelocityOverride;
+	  
+	IF bEnginesOnButton THEN
+		nCurrentState := 10;
+	END_IF
+	
+	10:	// Power ON
+	bEnginesLight := TRUE;
+	bPowerStatus := TRUE;
+	
+	M1McPower.Enable := TRUE;
+	M1McPower.Enable_Positive := TRUE;
+	M1McPower.Enable_Negative := TRUE;
+	M1McPower.Override := fVelocityOverride;
+	
+	M1sMcPower.Enable := TRUE;
+	M1sMcPower.Enable_Positive := TRUE;
+	M1sMcPower.Enable_Negative := TRUE;
+	M1sMcPower.Override := fVelocityOverride;
+	
+	M2McPower.Enable := TRUE;
+	M2McPower.Enable_Positive := TRUE;
+	M2McPower.Enable_Negative := TRUE;
+	M2McPower.Override := fVelocityOverride;
+		  
+	IF M1McPower.Active AND M1sMcPower.Active AND M2McPower.Active THEN
+		nCurrentState := 25;
+	END_IF		  
+
+	25:	// Reseting
+	bSlicingLight := FALSE;
+	bStopLight := FALSE;
+	
+	// Reset the axes
+	M1McReset.Execute := TRUE;
+	IF NOT bCoupled THEN
+		M1sMcReset.Execute := TRUE;
+		IF M1sMcReset.Done THEN
+			M1sMcReset.Execute := FALSE;
+		END_IF
+	END_IF
+	M2McReset.Execute := TRUE;
+	
+	// If the reseting is done, go check if the axes are ready for operation
+	IF M1McReset.Done AND M2McReset.Done THEN
+		M1McReset.Execute := FALSE;	
+		M2McReset.Execute := FALSE;
+		
+		IF nStoppedState = 200 OR nStoppedState = 300 OR nStoppedState = 400 OR nStoppedState = 500 OR nStoppedState = 600 THEN
+			nCurrentState := nStoppedState;
+		ELSE
+			nCurrentState := 50;
+		END_IF
+		
+	END_IF
+	
+	// Check for errors during the reseting
+	IF M1McReset.Error THEN
+		nErrorID := M1McReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M1sMcReset.Error THEN
+		nErrorID := M1sMcReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McReset.Error THEN
+		nErrorID := M2McReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+
+	50: // Checking if the axes are ready for operation
+	IF M1McPower.Status AND M1sMcPower.Status AND M2McPower.Status AND bPowerStatus THEN
+		nCurrentState := 75;
+	END_IF	
+	
+	// If there is some error go to the error state
+	IF M1McPower.Error THEN
+		nErrorID := M1McPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M1sMcPower.Error THEN
+		nErrorID := M1sMcPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McPower.Error THEN
+		nErrorID := M2McPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	75:		// Setting the slave axis to 0
+		M1sMcSetPosition.Execute := TRUE;
+		M1sMcSetPosition.Position := 0;
+					 
+		IF M1sMcSetPosition.Done THEN
+			M1sMcSetPosition.Execute := FALSE;
+			nCurrentState := 100;
+		END_IF
+
+	100:	// Gearing
+	// Synchronize M1s to M1. The ratio is 1 because they have to move synchronously
+	McGearIn.Execute := TRUE;
+	McGearIn.RatioNumerator := 1;
+	McGearIn.RatioDenominator := 1;
+		
+	// If they're coupled go to homing
+	IF McGearIn.InGear THEN
+		bCoupled := TRUE;
+		nCurrentState := 150;
+	END_IF
+	
+	150:	// Homing
+	// Home the axes with incremental encoders to 0
+	M1McHome.Execute := TRUE;
+	M1McHome.Position := 0;
+	M1McHome.HomingMode := MC_Direct;
+	
+	M2McHome.Execute := TRUE;
+	M2McHome.Position := 0;
+	M2McHome.HomingMode := MC_Direct;
+				 
+	// If the homing is done, stop executing it
+	IF M1McHome.Done AND M2McHome.Done THEN
+		M1McHome.Execute := FALSE;
+		M2McHome.Execute := FALSE;
+	END_IF
+	
+	// If there is some error go to the error state
+	IF M1McHome.Error THEN
+		nErrorID := M1McHome.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McHome.Error THEN
+		nErrorID := M2McHome.ErrorID;
+		nCurrentState := 999;
+	END_IF
+				
+	// If the start button is pressed and the given coordinates are valid go to the slicing starting position 
+	IF bStartButton AND bCoordinates THEN
+		nCurrentState := 200;
+	END_IF
+	
+	200:	// Slicing starting position
+	IF nStoppedState = 200 THEN
+		nStoppedState := 0;
+		fM1StartingDistance := fTempM1StartingDistance;
+		fM2StartingDistance := fTempM2StartingDistance;
+	ELSE
+		fTempM1StartingDistance := aStartingPosition[0];
+		fTempM2StartingDistance := aStartingPosition[1];
+	END_IF
+	
+	// Move all motors to the starting position
+	M1McMoveRelative.Execute := TRUE;
+	M1McMoveRelative.Distance := fTempM1StartingDistance;
+	M1McMoveRelative.Velocity := 10;
+	M1McMoveRelative.Acceleration := 10;
+	M1McMoveRelative.Deceleration := 10;
+	M1McMoveRelative.Jerk := 10000;
+					 
+	M2McMoveRelative.Execute := TRUE;
+	M2McMoveRelative.Distance := fTempM2StartingDistance;
+	M2McMoveRelative.Velocity := 10;
+	M2McMoveRelative.Acceleration := 10;
+	M2McMoveRelative.Deceleration := 10;
+	M2McMoveRelative.Jerk := 10000;
+					 
+	// If all motors reach the starting position go to the first slicing state
+	IF M1McMoveRelative.Done AND M2McMoveRelative.Done THEN
+		M1McMoveRelative.Execute := FALSE;
+		M2McMoveRelative.Execute := FALSE;
+		
+		nCurrentState := 300;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error OR M2McMoveRelative.Error THEN
+		IF M1McMoveRelative.Error THEN
+			nErrorID := M1McMoveRelative.ErrorID;
+		ELSIF M2McMoveRelative.Error THEN
+			nErrorID := M2McMoveRelative.ErrorID;
+		END_IF
+		nCurrentState := 999;
+	END_IF
+					 
+	300:	// Moving M1 & M1s positive y
+	bSlicingLight := TRUE;
+	
+	IF nStoppedState = 300 THEN
+		nStoppedState := 0;
+		fM1SlicingDistance := fTempM1SlicingDistance;
+	ELSE
+		fM1SlicingDistance := aSlicingDimensions[0];
+	END_IF
+	
+	M1McMoveRelative.Execute := TRUE;
+	M1McMoveRelative.Distance := fM1SlicingDistance;
+	M1McMoveRelative.Velocity := 5;
+	M1McMoveRelative.Acceleration := 5;
+	M1McMoveRelative.Deceleration := 5;
+	M1McMoveRelative.Jerk := 10000;
+				
+	// If the moving is done, move on to the next	
+	IF M1McMoveRelative.Done THEN
+		M1McMoveRelative.Execute := FALSE;
+		nCurrentState := 400;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error THEN
+		nErrorID := M1McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	400:	// Moving M2 positive x
+	bSlicingLight := TRUE;
+	
+	IF nStoppedState = 400 THEN
+		nStoppedState := 0;
+		fM2SlicingDistance := fTempM2SlicingDistance;
+	ELSE
+		fM2SlicingDistance := aSlicingDimensions[1];
+	END_IF
+	
+	M2McMoveRelative.Execute := TRUE;
+	M2McMoveRelative.Distance := fM2SlicingDistance;
+	M2McMoveRelative.Velocity := 10;
+	M2McMoveRelative.Acceleration := 10;
+	M2McMoveRelative.Deceleration := 10;
+	M2McMoveRelative.Jerk := 10000;
+				
+	// If the moving is done, move on to the next	
+	IF M2McMoveRelative.Done THEN
+		M2McMoveRelative.Execute := FALSE;
+		nCurrentState := 500;
+	END_IF
+	
+	// If error -> go to error state
+	IF M2McMoveRelative.Error THEN
+		nErrorID := M2McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	500:	// Moving M1 & M1s negative y
+	bSlicingLight := TRUE;
+	
+	IF nStoppedState = 500 THEN
+		nStoppedState := 0;
+		fM1SlicingDistance := fTempM1SlicingDistance;
+	ELSE
+		fM1SlicingDistance := aSlicingDimensions[0];
+	END_IF
+	
+	M1McMoveRelative.Execute := TRUE;
+	M1McMoveRelative.Distance := -fM1SlicingDistance;
+	M1McMoveRelative.Velocity := 5;
+	M1McMoveRelative.Acceleration := 5;
+	M1McMoveRelative.Deceleration := 5;
+	M1McMoveRelative.Jerk := 10000;
+				
+	// If the moving is done, move on to the next	
+	IF M1McMoveRelative.Done THEN
+		M1McMoveRelative.Execute := FALSE;
+		nCurrentState := 600;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error THEN
+		nErrorID := M1McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	600:	// Moving M2 negative x
+	bSlicingLight := TRUE;
+	
+	IF nStoppedState = 600 THEN
+		nStoppedState := 0;
+		fM2SlicingDistance := fTempM2SlicingDistance;
+	ELSE
+		fM2SlicingDistance := aSlicingDimensions[1];
+	END_IF
+	
+	M2McMoveRelative.Execute := TRUE;
+	M2McMoveRelative.Distance := -fM2SlicingDistance;
+	M2McMoveRelative.Velocity := 10;
+	M2McMoveRelative.Acceleration := 10;
+	M2McMoveRelative.Deceleration := 10;
+	M2McMoveRelative.Jerk := 10000;
+				
+	// If the moving is done it means the rectangle is cut -> go to decouple the axes	
+	IF M2McMoveRelative.Done THEN
+		bSlicingLight := FALSE;
+		M2McMoveRelative.Execute := FALSE;
+		nCurrentState := 700;
+	END_IF
+	
+	// If error -> go to error state
+	IF M2McMoveRelative.Error THEN
+		nErrorID := M2McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	700:	// Decouple the axes
+	McGearIn.Execute := FALSE;
+			 
+	McGearOut.Execute := TRUE;
+			  
+	// If the decoupling is done, move to the initial state
+	IF McGearOut.Done THEN
+		bCoupled := FALSE;
+		McGearOut.Execute := FALSE;
+				  
+		IF NOT bEnginesLight THEN
+			nCurrentState := 0;	  
+		ELSE
+			nCurrentState := 25;
+		END_IF
+	END_IF
+	
+	800:	// Stop	
+	bSlicingLight := FALSE;
+	bStopLight := TRUE;
+	
+	M1McStop.Execute := TRUE;
+	M1McStop.Deceleration := 10;
+	M1McStop.Jerk := 10000;
+	
+	M2McStop.Execute := TRUE;
+	M2McStop.Deceleration := 10;
+	M2McStop.Jerk := 10000;
+			 
+	IF M1McStop.Done THEN
+		M1McStop.Execute := FALSE;
+	END_IF
+	
+	IF M2McStop.Done THEN
+		M2McStop.Execute := FALSE;
+	END_IF
+	
+	// If we press on the continue button we want to continue where we left off
+	IF bContinueButton THEN
+		(* Since we are using incremental encoders and hence relative movements, we need 
+		   to do some math to determine the distance the slicer should go to. We'll give these 
+		   values as  dimensions of the rectangle or coordinates of the starting position. *)
+		IF nStoppedState = 200 THEN
+			fTempM1StartingDistance := aStartingPosition[0] - fM1Position;
+			fTempM2StartingDistance := aStartingPosition[1] - fM2Position;
+		ELSIF nStoppedState = 300 THEN
+			fTempM1SlicingDistance := aStartingPosition[0] + aSlicingDimensions[0] - fM1Position;
+		ELSIF nStoppedState = 400 THEN
+			fTempM2SlicingDistance := aStartingPosition[1] + aSlicingDimensions[1] - fM2Position;
+		ELSIF nStoppedState = 500 THEN
+			fTempM1SlicingDistance := fM1Position - aStartingPosition[0];
+		ELSIF nStoppedState = 600 THEN
+			fTempM2SlicingDistance := fM2Position - aStartingPosition[1];
+		END_IF
+		
+		nCurrentState := 25;	// Reseting must be done after stopping the axes
+	END_IF
+	
+	999:	// Error
+	bErrorLight := TRUE;
+	
+	M1McStop.Execute := TRUE;
+	M1McStop.Deceleration := 10;
+	M1McStop.Jerk := 10000;
+	
+	M2McStop.Execute := TRUE;
+	M2McStop.Deceleration := 10;
+	M2McStop.Jerk := 10000;
+			 
+	IF M1McStop.Done THEN
+		M1McStop.Execute := FALSE;
+	END_IF
+	
+	IF M2McStop.Done THEN
+		M2McStop.Execute := FALSE;
+	END_IF
+	
+	ADSLOGDINT(msgCtrlMask := ADSLOG_MSGTYPE_ERROR,
+			   msgFmtStr := TO_STRING(nErrorID),
+			   dintArg := 0);
+			   
+	// If the start button is pressed go to the reset state 
+	IF bStartButton THEN
+		bErrorLight := FALSE;
+		nCurrentState := 25;
+	END_IF
+END_CASE
+
+// Trigger logic
+fbStartButtonTrigger(CLK := bStartButton);
+bStartButton := fbStartButtonTrigger.Q;
+fbStopButtonTrigger(CLK := bStopButton);
+bStopButton := fbStopButtonTrigger.Q;
+fbContinueButtonTrigger(CLK := bContinueButton);
+bContinueButton := fbContinueButtonTrigger.Q;
+fbHomeButtonTrigger(CLK := bHomeButton);
+bHomeButton := fbHomeButtonTrigger.Q;
+fbEnginesOnButtonTrigger(CLK := bEnginesOnButton);
+bEnginesOnButton := fbEnginesOnButtonTrigger.Q;
+fbEnginesOffButtonTrigger(CLK := bEnginesOffButton);
+bEnginesOffButton := fbEnginesOffButtonTrigger.Q;
+
+// Stop the process if the stop button is pressed
+IF bStopButton THEN
+	M1McMoveRelative.Execute := FALSE;
+	M2McMoveRelative.Execute := FALSE;
+	nStoppedState := nCurrentState;
+	nCurrentState := 800;
+END_IF
+
+(* If all current positions of the axes are 0 -> they're homed. I chose "<= 1" instead of "= 0"
+   because I wanted to give some margin of error, ex. an axis being at a position of 0.02 *)
+IF (fM1Position <= 1) AND (fM1sPosition <= 1) AND (fM2Position <= 1) THEN
+	bHomedLight := TRUE;
+	bHomed := TRUE;
+ELSE
+	bHomedLight := FALSE;
+	bHomed := FALSE;
+END_IF
+
+// Home the axes if the return button is pressed
+IF bHomeButton THEN
+	// Reseting the stopped state if we want to home while stopped
+	nStoppedState := 0;
+	
+	// We need to stop executing the movements first
+	M1McMoveRelative.Execute := FALSE;
+	M2McMoveRelative.Execute := FALSE;
+
+	// I need to gear out first in order to be able to home the slave...
+	nCurrentState := 700;
+END_IF
+
+IF bEnginesOffButton AND bHomed THEN
+	bEnginesLight := FALSE;
+	// Have to decouple the axis first because we can't home it if it's not decoupled
+	nCurrentState := 700;
+ELSIF bEnginesOffButton AND NOT bHomed THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'The process must be stopped and the axes must be homed before turning the engines off!',
+			   dintArg := 0);
+END_IF
+
+(* This check ensures that the slicing operation stays within the 80x80 cm maximum allowed area 
+   by comparing the sum of the starting position and slicing dimensions against the defined machine 
+   boundaries. *)
+IF aStartingPosition[0] + aSlicingDimensions[0] >  MINIMUM_STARTING_POSITION + MAXIMUM_SLICING_DIMENSION OR
+   aStartingPosition[1] + aSlicingDimensions[1] > MINIMUM_STARTING_POSITION + MAXIMUM_SLICING_DIMENSION THEN
+	bLimit := TRUE;
+ELSE
+	bLimit := FALSE;
+END_IF
+
+// Logic for the variable bCoordinates
+IF aStartingPosition[0] = 0 OR aStartingPosition[1] = 0 OR 
+   aStartingPosition[0] < MINIMUM_STARTING_POSITION OR 
+   aStartingPosition[1] < MINIMUM_STARTING_POSITION OR
+   aSlicingDimensions[0] = 0 OR aSlicingDimensions[1] = 0 OR
+   aSlicingDimensions[0] > MAXIMUM_SLICING_DIMENSION OR 
+   aSlicingDimensions[1] > MAXIMUM_SLICING_DIMENSION OR
+   bLimit THEN
+   
+	bCoordinates := FALSE;
+ELSE
+	bCoordinates := TRUE;
+END_IF
+
+// Pop up boxes logic for when the start button is pressed but we can't start the process just yet
+IF bStartButton THEN
+	// If the engines are not turned on
+	IF NOT bPowerStatus THEN
+		adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'The engines need to be turned on first!',
+			   dintArg := 0);
+	// If the axes are not homed
+	ELSIF NOT bHomed THEN
+		adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Axes need to be homed first!',
+			   dintArg := 0);
+	// If the limit is exceeded, indicate that the values are out of bounds
+	ELSIF bLimit THEN
+		adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Given values are out of bounds!',
+			   dintArg := 0);
+	// If coordinates for the starting position are not given
+	ELSIF aStartingPosition[0] = 0 OR aStartingPosition[1] = 0 THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'You need to input coordinates for the starting position!',
+			   dintArg := 0);
+	// If the ooordinates are not valid
+	ELSIF aStartingPosition[0] < MINIMUM_STARTING_POSITION OR aStartingPosition[1] < MINIMUM_STARTING_POSITION THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Given coordinates are not valid! You need an input of at least 10!',
+			   dintArg := 0);		
+	// If slicing dimensions are not given
+	ELSIF aSlicingDimensions[0] = 0 OR aSlicingDimensions[1] = 0 THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'You need to input the rectangle dimensions!',
+			   dintArg := 0);
+	// If the dimensions are not valid
+	ELSIF aSlicingDimensions[0] > MAXIMUM_SLICING_DIMENSION OR aSlicingDimensions[1] > MAXIMUM_SLICING_DIMENSION THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Given dimensions are not valid! You need inputs lower than or equal to (80, 80)!',
+			   dintArg := 0);
+	END_IF
+END_IF
+
+// Determine the current operating state of the axes 
+AxisM1.ReadStatus();
+AxisM1s.ReadStatus();
+AxisM2.ReadStatus();
+
+// Call instances of the MC FBs
+M1McPower(Axis := AxisM1);
+M1sMcPower(Axis := AxisM1s);
+M2McPower(Axis := AxisM2);
+
+M1McMoveRelative(Axis := AxisM1);
+M1sMcMoveRelative(Axis := AxisM1s);
+M2McMoveRelative(Axis := AxisM2);
+
+M1McHome(Axis := AxisM1);
+//M1sMcHome(Axis := AxisM1s);
+M1sMcSetPosition(Axis := AxisM1s);
+M2McHome(Axis := AxisM2);
+
+M1McReset(Axis := AxisM1);
+M1sMcReset(Axis := AxisM1s);
+M2McReset(Axis := AxisM2);
+
+M1McStop(Axis := AxisM1);
+M1sMcStop(Axis := AxisM1s);
+M2McStop(Axis := AxisM2);
+
+McGearIn(Master := AxisM1, Slave := AxisM1s);
+McGearOut(Slave := AxisM1s);
+
+// Get the actual positions of each axis
+fM1Position := AxisM1.NcToPlc.ActPos;
+fM1sPosition := AxisM1s.NcToPlc.ActPos;
+fM2Position := AxisM2.NcToPlc.ActPos;]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Slicer">
+      <LineId Id="1179" Count="0" />
+      <LineId Id="1569" Count="1" />
+      <LineId Id="2961" Count="2" />
+      <LineId Id="3124" Count="3" />
+      <LineId Id="1185" Count="2" />
+      <LineId Id="2042" Count="0" />
+      <LineId Id="2146" Count="0" />
+      <LineId Id="2046" Count="0" />
+      <LineId Id="3096" Count="0" />
+      <LineId Id="2717" Count="0" />
+      <LineId Id="2050" Count="1" />
+      <LineId Id="2615" Count="0" />
+      <LineId Id="3098" Count="0" />
+      <LineId Id="3100" Count="2" />
+      <LineId Id="3099" Count="0" />
+      <LineId Id="3103" Count="0" />
+      <LineId Id="3105" Count="2" />
+      <LineId Id="3104" Count="0" />
+      <LineId Id="2958" Count="0" />
+      <LineId Id="2061" Count="4" />
+      <LineId Id="2147" Count="0" />
+      <LineId Id="2096" Count="1" />
+      <LineId Id="3108" Count="12" />
+      <LineId Id="2614" Count="0" />
+      <LineId Id="2847" Count="0" />
+      <LineId Id="2760" Count="1" />
+      <LineId Id="2106" Count="0" />
+      <LineId Id="2043" Count="0" />
+      <LineId Id="1188" Count="0" />
+      <LineId Id="2314" Count="0" />
+      <LineId Id="2562" Count="0" />
+      <LineId Id="2315" Count="0" />
+      <LineId Id="1574" Count="0" />
+      <LineId Id="1189" Count="0" />
+      <LineId Id="2127" Count="1" />
+      <LineId Id="2130" Count="0" />
+      <LineId Id="2132" Count="1" />
+      <LineId Id="2129" Count="0" />
+      <LineId Id="1190" Count="1" />
+      <LineId Id="1593" Count="0" />
+      <LineId Id="1192" Count="3" />
+      <LineId Id="2408" Count="1" />
+      <LineId Id="2411" Count="1" />
+      <LineId Id="2410" Count="0" />
+      <LineId Id="1196" Count="2" />
+      <LineId Id="1581" Count="0" />
+      <LineId Id="1199" Count="3" />
+      <LineId Id="1578" Count="2" />
+      <LineId Id="1577" Count="0" />
+      <LineId Id="1203" Count="10" />
+      <LineId Id="1582" Count="1" />
+      <LineId Id="1585" Count="0" />
+      <LineId Id="1584" Count="0" />
+      <LineId Id="1586" Count="2" />
+      <LineId Id="1216" Count="0" />
+      <LineId Id="1590" Count="2" />
+      <LineId Id="1589" Count="0" />
+      <LineId Id="1720" Count="1" />
+      <LineId Id="1723" Count="0" />
+      <LineId Id="1722" Count="0" />
+      <LineId Id="1725" Count="2" />
+      <LineId Id="1934" Count="0" />
+      <LineId Id="1728" Count="0" />
+      <LineId Id="1217" Count="1" />
+      <LineId Id="1511" Count="1" />
+      <LineId Id="1515" Count="0" />
+      <LineId Id="1509" Count="0" />
+      <LineId Id="1547" Count="0" />
+      <LineId Id="1551" Count="0" />
+      <LineId Id="1548" Count="0" />
+      <LineId Id="2134" Count="0" />
+      <LineId Id="1549" Count="1" />
+      <LineId Id="1510" Count="0" />
+      <LineId Id="1250" Count="0" />
+      <LineId Id="1516" Count="1" />
+      <LineId Id="1519" Count="1" />
+      <LineId Id="3134" Count="2" />
+      <LineId Id="1528" Count="4" />
+      <LineId Id="1536" Count="0" />
+      <LineId Id="1540" Count="6" />
+      <LineId Id="1552" Count="1" />
+      <LineId Id="1555" Count="0" />
+      <LineId Id="1554" Count="0" />
+      <LineId Id="1257" Count="0" />
+      <LineId Id="1259" Count="5" />
+      <LineId Id="2430" Count="2" />
+      <LineId Id="2435" Count="0" />
+      <LineId Id="2433" Count="1" />
+      <LineId Id="2436" Count="0" />
+      <LineId Id="2429" Count="0" />
+      <LineId Id="2437" Count="0" />
+      <LineId Id="1265" Count="1" />
+      <LineId Id="1268" Count="5" />
+      <LineId Id="3129" Count="4" />
+      <LineId Id="1280" Count="20" />
+      <LineId Id="2149" Count="0" />
+      <LineId Id="2368" Count="1" />
+      <LineId Id="2413" Count="0" />
+      <LineId Id="2370" Count="0" />
+      <LineId Id="2372" Count="1" />
+      <LineId Id="2371" Count="0" />
+      <LineId Id="2150" Count="0" />
+      <LineId Id="1301" Count="0" />
+      <LineId Id="1303" Count="18" />
+      <LineId Id="2552" Count="1" />
+      <LineId Id="2382" Count="0" />
+      <LineId Id="2414" Count="0" />
+      <LineId Id="2383" Count="2" />
+      <LineId Id="2380" Count="1" />
+      <LineId Id="1322" Count="0" />
+      <LineId Id="1324" Count="18" />
+      <LineId Id="2554" Count="1" />
+      <LineId Id="2376" Count="0" />
+      <LineId Id="2415" Count="0" />
+      <LineId Id="2377" Count="2" />
+      <LineId Id="2374" Count="1" />
+      <LineId Id="1343" Count="0" />
+      <LineId Id="1345" Count="18" />
+      <LineId Id="2556" Count="1" />
+      <LineId Id="2387" Count="0" />
+      <LineId Id="2416" Count="0" />
+      <LineId Id="2388" Count="2" />
+      <LineId Id="2386" Count="0" />
+      <LineId Id="2152" Count="0" />
+      <LineId Id="1364" Count="0" />
+      <LineId Id="1366" Count="7" />
+      <LineId Id="2313" Count="0" />
+      <LineId Id="1374" Count="10" />
+      <LineId Id="1387" Count="0" />
+      <LineId Id="1707" Count="1" />
+      <LineId Id="1391" Count="2" />
+      <LineId Id="2136" Count="0" />
+      <LineId Id="1394" Count="0" />
+      <LineId Id="2160" Count="0" />
+      <LineId Id="1396" Count="0" />
+      <LineId Id="2159" Count="0" />
+      <LineId Id="2157" Count="0" />
+      <LineId Id="1397" Count="0" />
+      <LineId Id="2158" Count="0" />
+      <LineId Id="1398" Count="1" />
+      <LineId Id="1775" Count="0" />
+      <LineId Id="2558" Count="0" />
+      <LineId Id="2561" Count="0" />
+      <LineId Id="2559" Count="0" />
+      <LineId Id="1777" Count="0" />
+      <LineId Id="1779" Count="2" />
+      <LineId Id="3137" Count="1" />
+      <LineId Id="1785" Count="3" />
+      <LineId Id="1790" Count="3" />
+      <LineId Id="1776" Count="0" />
+      <LineId Id="2333" Count="0" />
+      <LineId Id="2337" Count="0" />
+      <LineId Id="2334" Count="0" />
+      <LineId Id="2340" Count="0" />
+      <LineId Id="2344" Count="1" />
+      <LineId Id="2541" Count="1" />
+      <LineId Id="2539" Count="0" />
+      <LineId Id="2544" Count="7" />
+      <LineId Id="2543" Count="0" />
+      <LineId Id="2397" Count="1" />
+      <LineId Id="2336" Count="0" />
+      <LineId Id="1774" Count="0" />
+      <LineId Id="1400" Count="0" />
+      <LineId Id="2143" Count="1" />
+      <LineId Id="1401" Count="0" />
+      <LineId Id="1403" Count="3" />
+      <LineId Id="1408" Count="4" />
+      <LineId Id="1414" Count="3" />
+      <LineId Id="1419" Count="7" />
+      <LineId Id="2145" Count="0" />
+      <LineId Id="1427" Count="2" />
+      <LineId Id="1802" Count="0" />
+      <LineId Id="1710" Count="0" />
+      <LineId Id="1709" Count="0" />
+      <LineId Id="1711" Count="0" />
+      <LineId Id="1743" Count="1" />
+      <LineId Id="2393" Count="0" />
+      <LineId Id="2395" Count="0" />
+      <LineId Id="1797" Count="1" />
+      <LineId Id="1745" Count="3" />
+      <LineId Id="1750" Count="0" />
+      <LineId Id="1749" Count="0" />
+      <LineId Id="1751" Count="0" />
+      <LineId Id="2405" Count="0" />
+      <LineId Id="2407" Count="0" />
+      <LineId Id="2391" Count="0" />
+      <LineId Id="1752" Count="1" />
+      <LineId Id="3161" Count="8" />
+      <LineId Id="3160" Count="0" />
+      <LineId Id="1919" Count="0" />
+      <LineId Id="1918" Count="0" />
+      <LineId Id="1920" Count="0" />
+      <LineId Id="2565" Count="0" />
+      <LineId Id="2563" Count="1" />
+      <LineId Id="1954" Count="0" />
+      <LineId Id="1951" Count="0" />
+      <LineId Id="1953" Count="0" />
+      <LineId Id="1955" Count="0" />
+      <LineId Id="1952" Count="0" />
+      <LineId Id="1921" Count="1" />
+      <LineId Id="2038" Count="1" />
+      <LineId Id="2155" Count="0" />
+      <LineId Id="2161" Count="0" />
+      <LineId Id="2040" Count="0" />
+      <LineId Id="2570" Count="0" />
+      <LineId Id="2572" Count="1" />
+      <LineId Id="2571" Count="0" />
+      <LineId Id="2041" Count="0" />
+      <LineId Id="3121" Count="0" />
+      <LineId Id="2591" Count="0" />
+      <LineId Id="3122" Count="1" />
+      <LineId Id="2593" Count="0" />
+      <LineId Id="2596" Count="0" />
+      <LineId Id="2594" Count="0" />
+      <LineId Id="2597" Count="1" />
+      <LineId Id="2595" Count="0" />
+      <LineId Id="2312" Count="0" />
+      <LineId Id="2287" Count="0" />
+      <LineId Id="2286" Count="0" />
+      <LineId Id="2331" Count="0" />
+      <LineId Id="2579" Count="0" />
+      <LineId Id="2330" Count="0" />
+      <LineId Id="2332" Count="0" />
+      <LineId Id="2580" Count="0" />
+      <LineId Id="2582" Count="0" />
+      <LineId Id="2581" Count="0" />
+      <LineId Id="2288" Count="0" />
+      <LineId Id="2290" Count="1" />
+      <LineId Id="2289" Count="0" />
+      <LineId Id="3171" Count="38" />
+      <LineId Id="3170" Count="0" />
+      <LineId Id="3143" Count="0" />
+      <LineId Id="3140" Count="2" />
+      <LineId Id="3139" Count="0" />
+      <LineId Id="3144" Count="0" />
+      <LineId Id="3093" Count="0" />
+      <LineId Id="3092" Count="0" />
+      <LineId Id="3094" Count="1" />
+      <LineId Id="1430" Count="0" />
+      <LineId Id="1448" Count="5" />
+      <LineId Id="3145" Count="0" />
+      <LineId Id="1454" Count="8" />
+      <LineId Id="3147" Count="0" />
+      <LineId Id="3146" Count="0" />
+      <LineId Id="3148" Count="1" />
+      <LineId Id="1463" Count="2" />
+      <LineId Id="278" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

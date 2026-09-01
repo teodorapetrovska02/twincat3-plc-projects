@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_Button" Id="{b2f3118b-ec23-4df5-bd97-034de513c742}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Button
+VAR_INPUT
+	bIsButtonPressed : BOOL;
+END_VAR
+VAR_OUTPUT
+	bActivate : BOOL;
+END_VAR
+VAR
+	fbToggle_RTRIG : R_TRIG;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// This is a toggle button
+fbToggle_RTRIG(clk := bIsButtonPressed);
+IF fbToggle_RTRIG.Q THEN
+	bActivate := NOT bActivate;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Button">
+      <LineId Id="13" Count="3" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

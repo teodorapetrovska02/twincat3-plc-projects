@@ -1,0 +1,380 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_Slicer" Id="{8454c7b5-ab50-4684-8b34-d69862527090}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Slicer
+VAR_INPUT
+	bStartButton : BOOL;
+END_VAR
+VAR_OUTPUT
+	fM1Position : LREAL;
+	fM1sPosition : LREAL;
+	fM2Position : LREAL;
+	
+	nErrorID : UDINT;
+END_VAR
+VAR
+	// References to the axes
+	AxisM1 : AXIS_REF;	// Master
+	AxisM1s : AXIS_REF;	// Slave
+	AxisM2 : AXIS_REF;
+	
+	// Adequate function blocks needed for the axes
+	M1McPower : MC_Power;
+	M1McMoveRelative : MC_MoveRelative;
+	M1McHome : MC_Home;
+	M1McReset : MC_Reset;
+	M1McStop : MC_Stop;
+	
+	M1sMcPower : MC_Power;
+	M1sMcMoveRelative : MC_MoveRelative;
+	M1sMcHome : MC_Home;
+	M1sMcReset : MC_Reset;
+	M1sMcStop : MC_Stop;
+	
+	M2McPower : MC_Power;
+	M2McMoveRelative : MC_MoveRelative;
+	M2McHome : MC_Home;
+	M2McReset : MC_Reset;
+	M2McStop : MC_Stop;
+	
+	// FBs needed to synchronise and desynchronize M1s to M1
+	McGearIn : MC_GearIn;
+	McGearOut : MC_GearOut;
+	
+	// Variable to tell us if the axes are homed or not
+	bHomed : BOOL;
+	
+	// Variable needed for initializing the CASE structure states
+	nCurrentState : DINT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* This FB deals with controlling a machine that's got 3 motors with incremental encoders. Two of them (M1 & M1s) 
+   function synchronous moving a slicer on the y axis whereas the third one (M2) moves the slicer on the x axis. 
+   M1 & M1s have a master - slave configuration. The idea is that the machine will be used to cut identical 
+   rectangles, so what we want to do is to home the axes, take the slicer to a predefined position where we want 
+   the slicing to start and cut out a rectangle by moving M1 & M1s synchronously positive the y axis, then M2 in a 
+   positive direction on the x axis, then M1 & M1s negative y and then M2 negative x. *)
+   
+   
+CASE nCurrentState OF
+	0:	// Initialization
+	// Reset the axes
+	M1McReset(Axis := AxisM1, Execute := TRUE);
+	M1sMcReset(Axis := AxisM1s, Execute := TRUE);
+	M2McReset(Axis := AxisM2, Execute := TRUE);
+	
+	// If the reseting is done, go check if the axes are ready for operation
+	IF M1McReset.Done AND M1sMcReset.Done AND M2McReset.Done THEN
+		M1McReset(Axis := AxisM1, Execute := FALSE);
+		M1sMcReset(Axis := AxisM1s, Execute := FALSE);
+		M2McReset(Axis := AxisM2, Execute := FALSE);
+		
+		nCurrentState := 50;
+	END_IF
+	
+	// Check for errors during the reseting
+	IF M1McReset.Error THEN
+		nErrorID := M1McReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M1sMcReset.Error THEN
+		nErrorID := M1sMcReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McReset.Error THEN
+		nErrorID := M2McReset.ErrorID;
+		nCurrentState := 999;
+	END_IF
+
+	50: // Checking if the axes are ready for operation
+	IF M1McPower.Status AND M1sMcPower.Status AND M2McPower.Status THEN
+		nCurrentState := 100;
+	END_IF	
+	
+	// If there is some error go to the error state
+	IF M1McPower.Error THEN
+		nErrorID := M1McPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M1sMcPower.Error THEN
+		nErrorID := M1sMcPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McPower.Error THEN
+		nErrorID := M2McPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+
+	100:	// Gearing
+	// Synchronize M1s to M1. The ratio is 1 because they have to move synchronously
+	McGearIn(Master := AxisM1,
+			 Slave := AxisM1s,
+			 Execute := TRUE,
+			 RatioNumerator := 1,
+			 RatioDenominator := 1);
+		
+	(* If they're coupled go to homing, otherwise give an error pop up and wait until the start button is
+	   pressed again in order to re to the initialization state *)
+	IF McGearIn.InGear THEN
+		nCurrentState := 150;
+	ELSE
+		adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Axes need to be homed first!',
+			   dintArg := 0);
+	END_IF
+	
+	150:	// Homing
+	// Home the axes with incremental encoders to 0
+	M1McHome(Axis := AxisM1,
+			 Execute := TRUE,
+			 Position := 0,
+			 HomingMode := MC_Direct);
+	M2McHome(Axis := AxisM2,
+			 Execute := TRUE,
+			 Position := 0,
+			 HomingMode := MC_Direct);
+				 
+	// If the homing is done, stop executing it
+	IF M1McHome.Done AND M1sMcHome.Done AND M2McHome.Done THEN
+		bHomed := TRUE;
+		M1McHome(Axis := AxisM1,
+				 Execute := FALSE);
+		M2McHome(Axis := AxisM2,
+				 Execute := FALSE);
+	END_IF
+	
+	// If there is some error go to the error state
+	IF M1McHome.Error THEN
+		nErrorID := M1McHome.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	IF M2McHome.Error THEN
+		nErrorID := M2McHome.ErrorID;
+		nCurrentState := 999;
+	END_IF
+				
+	// If the start button is pressed go to the slicing starting position 
+	IF bStartButton THEN
+		nCurrentState := 200;
+	END_IF
+	
+	200:	// Slicing starting position
+	bHomed := FALSE;
+	
+	// Move all motors to the starting position
+	M1McMoveRelative(Axis := AxisM1,
+					 Execute := TRUE,
+					 Distance := 40,
+					 Velocity := 10,
+					 Acceleration := 10,
+					 Deceleration := 10,
+					 Jerk := 10000);
+					 
+	M2McMoveRelative(Axis := AxisM2,
+					 Execute := TRUE,
+					 Distance := 25,
+					 Velocity := 10,
+					 Acceleration := 10,
+					 Deceleration := 10,
+					 Jerk := 10000);
+					 
+	// If all motors reach the starting position go to the first slicing state
+	IF M1McMoveRelative.Done AND M2McMoveRelative.Done THEN
+		M1McMoveRelative(Axis := AxisM1, Execute := FALSE);
+		M2McMoveRelative(Axis := AxisM2, Execute := FALSE);
+		
+		nCurrentState := 300;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error OR M2McMoveRelative.Error THEN
+		IF M1McMoveRelative.Error THEN
+			nErrorID := M1McMoveRelative.ErrorID;
+		ELSIF M2McMoveRelative.Error THEN
+			nErrorID := M2McMoveRelative.ErrorID;
+		END_IF
+		nCurrentState := 999;
+	END_IF
+					 
+	300:	// Moving M1 & M1s positive y
+	M1McMoveRelative(Axis := AxisM1,
+				     Execute := TRUE,
+					 Distance := 20,
+					 Velocity := 5,
+					 Acceleration := 5,
+					 Deceleration := 5,
+					 Jerk := 10000);
+				
+	// If the moving is done, move on to the next	
+	IF M1McMoveRelative.Done THEN
+		M1McMoveRelative(Axis := AxisM1, Execute := FALSE);
+		nCurrentState := 400;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error THEN
+		nErrorID := M1McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	400:	// Moving M2 positive x
+	M2McMoveRelative(Axis := AxisM2,
+				     Execute := TRUE,
+					 Distance := 50,
+					 Velocity := 10,
+					 Acceleration := 10,
+					 Deceleration := 10,
+					 Jerk := 10000);
+				
+	// If the moving is done, move on to the next	
+	IF M2McMoveRelative.Done THEN
+		M2McMoveRelative(Axis := AxisM2, Execute := FALSE);
+		nCurrentState := 500;
+	END_IF
+	
+	// If error -> go to error state
+	IF M2McMoveRelative.Error THEN
+		nErrorID := M2McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	500:	// Moving M1 & M1s negative y
+	M1McMoveRelative(Axis := AxisM1,
+				     Execute := TRUE,
+					 Distance := -20,
+					 Velocity := 5,
+					 Acceleration := 5,
+					 Deceleration := 5,
+					 Jerk := 10000);
+				
+	// If the moving is done, move on to the next	
+	IF M1McMoveRelative.Done THEN
+		M1McMoveRelative(Axis := AxisM1, Execute := FALSE);
+		nCurrentState := 600;
+	END_IF
+	
+	// If error -> go to error state
+	IF M1McMoveRelative.Error THEN
+		nErrorID := M1McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	600:	// Moving M2 negative x
+	M2McMoveRelative(Axis := AxisM2,
+				     Execute := TRUE,
+					 Distance := -50,
+					 Velocity := 10,
+					 Acceleration := 10,
+					 Deceleration := 10,
+					 Jerk := 10000);
+				
+	// If the moving is done it means the rectangle is cut -> go to decouple the axes	
+	IF M2McMoveRelative.Done THEN
+		M2McMoveRelative(Axis := AxisM2, Execute := FALSE);
+		nCurrentState := 700;
+	END_IF
+	
+	// If error -> go to error state
+	IF M2McMoveRelative.Error THEN
+		nErrorID := M2McMoveRelative.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	700:	// Decouple the axes
+	McGearIn(Master := AxisM1,
+			 Slave := AxisM1s,
+			 Execute := FALSE);
+	
+	McGearOut(Slave := AxisM1s,
+			  Execute := TRUE);
+			  
+	// If the decoupling is done, move to the initial state
+	IF McGearOut.Done THEN
+		McGearOut(Slave := AxisM1s,
+				  Execute := FALSE);
+		
+		nCurrentState := 0;
+	END_IF
+	
+	999:	// Error
+	M1McStop(Axis := AxisM1,
+			 Execute := TRUE,
+			 Deceleration := 10,
+			 Jerk := 10000);
+	
+	M2McStop(Axis := AxisM2,
+			 Execute := TRUE,
+			 Deceleration := 10,
+			 Jerk := 10000);
+			 
+	IF M1McStop.Done THEN
+		M1McStop(Axis := AxisM1,
+				 Execute := FALSE);
+	END_IF
+	
+	IF M2McStop.Done THEN
+		M2McStop(Axis := AxisM2,
+				 Execute := FALSE);
+	END_IF
+	
+	ADSLOGDINT(msgCtrlMask := ADSLOG_MSGTYPE_ERROR,
+			   msgFmtStr := TO_STRING(nErrorID),
+			   dintArg := 0);
+			   
+	// If the start button is pressed go to the initial state 
+	IF bStartButton THEN
+		nCurrentState := 0;
+	END_IF
+END_CASE
+
+// Give an error if the start button is pressed but the axes are not homed
+IF bStartButton AND NOT bHomed THEN
+	adslogdint(msgCtrlMask := ADSLOG_MSGTYPE_MSGBOX,
+			   msgFmtStr := 'Axes need to be homed first!',
+			   dintArg := 0);
+END_IF
+
+AxisM1.ReadStatus();
+AxisM1s.ReadStatus();
+AxisM2.ReadStatus();
+
+M1McPower(Axis := AxisM1,
+		  Enable := TRUE,
+		  Enable_Positive := TRUE,
+		  Enable_Negative := TRUE);
+M1sMcPower(Axis := AxisM1s,
+		  Enable := TRUE,
+		  Enable_Positive := TRUE,
+		  Enable_Negative := TRUE);
+M2McPower(Axis := AxisM2,
+		  Enable := TRUE,
+		  Enable_Positive := TRUE,
+		  Enable_Negative := TRUE);
+
+M1McMoveRelative(Axis := AxisM1);
+M1sMcMoveRelative(Axis := AxisM1s);
+M2McMoveRelative(Axis := AxisM2);
+
+M1McHome(Axis := AxisM1);
+M1sMcHome(Axis := AxisM1s);
+M2McHome(Axis := AxisM2);
+
+M1McReset(Axis := AxisM1);
+M1sMcReset(Axis := AxisM1s);
+M2McReset(Axis := AxisM2);
+
+M1McStop(Axis := AxisM1);
+M1sMcStop(Axis := AxisM1s);
+M2McStop(Axis := AxisM2);
+
+fM1Position := AxisM1.NcToPlc.ActPos;
+fM1sPosition := AxisM1s.NcToPlc.ActPos;
+fM2Position := AxisM2.NcToPlc.ActPos;]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Slicer">
+      <LineId Id="377" Count="320" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

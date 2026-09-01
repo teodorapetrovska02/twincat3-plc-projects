@@ -1,0 +1,509 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_Tank" Id="{74bb10c7-dbaf-48a6-9a16-7143ec5fc846}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Tank
+VAR_INPUT
+	bIsFillButtonPressed : BOOL;
+	bIsDrainButtonPressed : BOOL;
+END_VAR
+VAR_OUTPUT
+	bFillValve : BOOL;
+	bDrainValve : BOOL;
+	
+	bFillLight : BOOL;
+	bDrainLight : BOOL;
+	
+	bFillBlink : BOOL;
+	bDrainBlink : BOOL;
+END_VAR
+VAR
+	// Instances of the button FB
+	fbFillButton : FB_Button;
+	fbDrainButton : FB_Button;
+	
+	fbFButton : FB_ButtonT;
+	fbDButton : FB_ButtonT;
+
+	fbFillLightBlink : FB_BlinkingLight;
+	fbDrainLightBlink : FB_BlinkingLight;
+
+	CurrentState : INT;
+	
+	// bIsFilling : BOOL;
+	// bIsDraining : BOOL;
+	
+	fbFillTimer : TON;
+	fbDrainTimer : TON;
+	
+	tMaxTime : TIME := T#6S;	// Maximum time it takes the tank to fill / drain
+	tFillTime : TIME := tMaxTime;	// Remaining time it takes to fill the tank
+	tDrainTime : TIME := tMaxTime;	// Remaining time it takes to drain the tank
+	
+	tElapsedFillTime : TIME;
+	tElapsedDrainTime : TIME;
+	
+	bHighSensor : BOOL;
+	bLowSensor : BOOL;
+	
+	fbFillStop : R_TRIG;
+	fbDrainStop : R_TRIG;
+	
+	// Variables used only for the visualisation
+	bVisHigh : BOOL;
+	bVisMid : BOOL;
+	bVisLow : BOOL;
+	fbVisTimer1 : TON;
+	fbVisTimer2 : TON;
+	
+	Pomoshen : TON;
+	bPom : BOOL;
+	
+	bProcessStopped: BOOL;
+	bAllowFilling: BOOL := TRUE;
+	
+	bActivate : BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// State machine logic
+CASE currentState OF
+    0: // Idle
+        bFillValve := FALSE;
+        bDrainValve := FALSE;
+
+        bFillLight := FALSE;
+        bDrainLight := FALSE;
+
+        bFillBlink := FALSE;
+        bDrainBlink := FALSE;
+
+        fbFillTimer.IN := FALSE;
+        fbDrainTimer.IN := FALSE;
+
+        IF fbFillButton.bActivate AND NOT bHighSensor THEN
+            currentState := 1; // Filling
+        ELSIF fbDrainButton.bActivate AND NOT bLowSensor THEN
+            currentState := 2; // Draining
+        END_IF
+
+    1: // Filling
+        bFillValve := TRUE;
+        bDrainValve := FALSE;
+
+        fbFillLightBlink(dwTimeOn := 500, dwTimeOff := 250, bLight => bFillLight);
+        bDrainLight := FALSE;
+
+        fbFillTimer.IN := TRUE;
+        fbDrainTimer.IN := FALSE;
+
+        tElapsedFillTime := fbFillTimer.ET;
+		
+		fbVisTimer1(IN := TRUE);
+		IF fbVisTimer1.Q THEN
+			bVisHigh := FALSE;
+			bVisMid := FALSE;
+			bVisLow := TRUE;
+		END_IF
+		fbVisTimer2(IN := TRUE);
+		IF fbVisTimer2.Q THEN
+			bVisHigh := FALSE;
+			bVisMid := TRUE;
+			bVisLow := TRUE;
+		END_IF
+
+        IF bHighSensor THEN
+            bLowSensor := FALSE;
+			
+			fbVisTimer1(IN := FALSE);
+			fbVisTimer2(IN := FALSE);
+			
+			bVisHigh := TRUE;
+			bVisMid := TRUE;
+			bVisLow := TRUE;
+			
+            currentState := 3; // Full
+        END_IF
+
+    2: // Draining
+        bFillValve := FALSE;
+        bDrainValve := TRUE;
+
+        bFillLight := FALSE;
+        fbDrainLightBlink(dwTimeOn := 500, dwTimeOff := 250, bLight => bDrainLight);
+
+        fbFillTimer.IN := FALSE;
+        fbDrainTimer.IN := TRUE;
+
+        tElapsedDrainTime := fbDrainTimer.ET;
+		
+		fbVisTimer1(IN := TRUE);
+		IF fbVisTimer1.Q THEN
+			bVisHigh := FALSE;
+			bVisMid := TRUE;
+			bVisLow := TRUE;
+		END_IF
+		fbVisTimer2(IN := TRUE);
+		IF fbVisTimer2.Q THEN
+			bVisHigh := FALSE;
+			bVisMid := FALSE;
+			bVisLow := TRUE;
+		END_IF
+
+        IF bLowSensor THEN
+            bHighSensor := FALSE;
+			
+			fbVisTimer1(IN := FALSE);
+			fbVisTimer2(IN := FALSE);
+			
+			bVisHigh := FALSE;
+			bVisMid := FALSE;
+			bVisLow := FALSE;
+			
+            currentState := 4; // Empty
+        END_IF
+
+    3: // Full
+        bFillValve := FALSE;
+        bFillLight := TRUE;
+
+        bHighSensor := TRUE;
+        bLowSensor := FALSE;
+
+        bDrainValve := FALSE;
+
+        IF fbDrainButton.bActivate THEN
+            fbDrainTimer.IN := TRUE;
+            fbFillTimer.IN := FALSE;
+            currentState := 2; // Draining
+        END_IF
+
+    4: // Empty
+        bDrainValve := FALSE;
+        bDrainLight := TRUE;
+
+        bHighSensor := FALSE;
+        bLowSensor := TRUE;
+
+        IF fbFillButton.bActivate THEN
+            currentState := 1; // Filling
+        END_IF
+END_CASE
+
+// Update button states
+fbFillButton(bIsButtonPressed := bIsFillButtonPressed);
+fbDrainButton(bIsButtonPressed := bIsDrainButtonPressed);
+
+// Update timers based on button deactivation and state changes
+IF (NOT fbFillButton.bActivate AND currentState = 1) THEN
+    tFillTime := tMaxTime - tElapsedFillTime;
+    tDrainTime := tElapsedFillTime;	
+    currentState := 0; // Transition to Idle
+ELSIF (NOT fbDrainButton.bActivate AND currentState = 2) THEN
+    tDrainTime := tMaxTime - tElapsedDrainTime;
+    tFillTime := tElapsedDrainTime;
+    currentState := 0; // Transition to Idle
+ELSIF (NOT fbFillButton.bActivate AND currentState = 3) THEN
+    tFillTime := T#0S;
+    tDrainTime := tMaxTime;	
+    currentState := 0; // Transition to Idle
+ELSIF (NOT fbDrainButton.bActivate AND currentState = 4) THEN
+    tFillTime := tMaxTime;
+    tDrainTime := T#0S;	
+    currentState := 0; // Transition to Idle
+END_IF
+
+// Sensor logic
+IF bFillValve THEN
+    tElapsedFillTime := fbFillTimer.ET;
+    IF fbFillTimer.Q THEN
+        bHighSensor := TRUE;
+        bLowSensor := FALSE;
+    ELSE
+        bHighSensor := FALSE;
+        bLowSensor := FALSE;
+    END_IF
+END_IF
+
+IF bDrainValve THEN
+    tElapsedDrainTime := fbDrainTimer.ET;
+    IF fbDrainTimer.Q THEN
+        bHighSensor := FALSE;
+        bLowSensor := TRUE;
+    ELSE
+        bHighSensor := FALSE;
+        bLowSensor := FALSE;
+    END_IF
+END_IF
+
+fbFillTimer(PT := tFillTime);
+fbDrainTimer(PT := tDrainTime);
+
+fbVisTimer1(PT := T#2S);
+fbVisTimer2(PT := T#4S);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//// State machine logic
+//CASE currentState OF
+//    0: // Idle
+//        bFillValve := FALSE;
+//        bDrainValve := FALSE;
+
+//        bFillLight := FALSE;
+//        bDrainLight := FALSE;
+
+//        bFillBlink := FALSE;
+//        bDrainBlink := FALSE;
+
+//        fbFillTimer.IN := FALSE;
+//        fbDrainTimer.IN := FALSE;
+
+//        IF fbFButton.bActivate AND NOT bHighSensor THEN
+//            currentState := 1; // Filling
+//        ELSIF fbDButton.bActivate AND NOT bLowSensor THEN
+//            currentState := 2; // Draining
+//        END_IF
+
+//    1: // Filling
+//        bFillValve := TRUE;
+//        bDrainValve := FALSE;
+
+//        fbFillLightBlink(dwTimeOn := 500, dwTimeOff := 250, bLight => bFillLight);
+//        bDrainLight := FALSE;
+
+//        fbFillTimer.IN := TRUE;
+//        fbDrainTimer.IN := FALSE;
+
+//        tElapsedFillTime := fbFillTimer.ET;
+		
+//		fbVisTimer1(IN := TRUE);
+//		IF fbVisTimer1.Q THEN
+//			bVisHigh := FALSE;
+//			bVisMid := FALSE;
+//			bVisLow := TRUE;
+//		END_IF
+//		fbVisTimer2(IN := TRUE);
+//		IF fbVisTimer2.Q THEN
+//			bVisHigh := FALSE;
+//			bVisMid := TRUE;
+//			bVisLow := TRUE;
+//		END_IF
+
+//        IF bHighSensor THEN
+//            bLowSensor := FALSE;
+			
+//			fbVisTimer1(IN := FALSE);
+//			fbVisTimer2(IN := FALSE);
+			
+//			bVisHigh := TRUE;
+//			bVisMid := TRUE;
+//			bVisLow := TRUE;
+			
+//            currentState := 3; // Full
+//        END_IF
+
+//    2: // Draining
+//        bFillValve := FALSE;
+//        bDrainValve := TRUE;
+
+//        bFillLight := FALSE;
+//        fbDrainLightBlink(dwTimeOn := 500, dwTimeOff := 250, bLight => bDrainLight);
+
+//        fbFillTimer.IN := FALSE;
+//        fbDrainTimer.IN := TRUE;
+
+//        tElapsedDrainTime := fbDrainTimer.ET;
+		
+//		fbVisTimer1(IN := TRUE);
+//		IF fbVisTimer1.Q THEN
+//			bVisHigh := FALSE;
+//			bVisMid := TRUE;
+//			bVisLow := TRUE;
+//		END_IF
+//		fbVisTimer2(IN := TRUE);
+//		IF fbVisTimer2.Q THEN
+//			bVisHigh := FALSE;
+//			bVisMid := FALSE;
+//			bVisLow := TRUE;
+//		END_IF
+
+//        IF bLowSensor THEN
+//            bHighSensor := FALSE;
+			
+//			fbVisTimer1(IN := FALSE);
+//			fbVisTimer2(IN := FALSE);
+			
+//			bVisHigh := FALSE;
+//			bVisMid := FALSE;
+//			bVisLow := FALSE;
+			
+//            currentState := 4; // Empty
+//        END_IF
+
+//    3: // Full
+//        bFillValve := FALSE;
+//        bFillLight := TRUE;
+
+//        bHighSensor := TRUE;
+//        bLowSensor := FALSE;
+
+//        bDrainValve := FALSE;
+
+//        IF fbDButton.bActivate THEN
+//            fbDrainTimer.IN := TRUE;
+//            fbFillTimer.IN := FALSE;
+//            currentState := 2; // Draining
+//        END_IF
+
+//    4: // Empty
+//        bDrainValve := FALSE;
+//        bDrainLight := TRUE;
+
+//        bHighSensor := FALSE;
+//        bLowSensor := TRUE;
+
+//        IF fbFButton.bActivate THEN
+//            currentState := 1; // Filling
+//        END_IF
+//END_CASE
+
+//// Update button states
+//fbFButton(bIsButtonOn := bIsFillButtonPressed);
+//fbDButton(bIsButtonOn := bIsDrainButtonPressed);
+
+////// Update timers based on button deactivation and state changes
+////IF (NOT fbFButton.bActivate AND currentState = 1) THEN
+////    tFillTime := tMaxTime - tElapsedFillTime;
+////    tDrainTime := tElapsedFillTime;	
+////    currentState := 0; // Transition to Idle
+////ELSIF (NOT fbDButton.bActivate AND currentState = 2) THEN
+////    tDrainTime := tMaxTime - tElapsedDrainTime;
+////    tFillTime := tElapsedDrainTime;
+////    currentState := 0; // Transition to Idle
+////ELSIF (NOT fbFButton.bActivate AND currentState = 3) THEN
+////    tFillTime := T#0S;
+////    tDrainTime := tMaxTime;	
+////    currentState := 0; // Transition to Idle
+////ELSIF (NOT fbDButton.bActivate AND currentState = 4) THEN
+////    tFillTime := tMaxTime;
+////    tDrainTime := T#0S;	
+////    currentState := 0; // Transition to Idle
+////END_IF
+
+//IF (NOT fbFButton.bActivate AND currentState = 1) THEN
+//    tFillTime := tMaxTime - tElapsedFillTime;
+//    tDrainTime := tElapsedFillTime;	
+//    currentState := 0; // Transition to Idle
+//ELSIF (NOT fbDButton.bActivate AND currentState = 2) THEN
+//    tDrainTime := tMaxTime - tElapsedDrainTime;
+//    tFillTime := tElapsedDrainTime;
+//    currentState := 0; // Transition to Idle
+//ELSIF (NOT fbFButton.bActivate AND currentState = 3) THEN
+//    tFillTime := T#0S;
+//    tDrainTime := tMaxTime;	
+//    currentState := 0; // Transition to Idle
+//ELSIF (NOT fbDButton.bActivate AND currentState = 4) THEN
+//    tFillTime := tMaxTime;
+//    tDrainTime := T#0S;	
+//    currentState := 0; // Transition to Idle
+//END_IF
+
+
+//// Sensor logic
+//IF bFillValve THEN
+//    tElapsedFillTime := fbFillTimer.ET;
+//    IF fbFillTimer.Q THEN
+//        bHighSensor := TRUE;
+//        bLowSensor := FALSE;
+		
+//		fbFButton(bIsButtonOff := TRUE);
+//    ELSE
+//        bHighSensor := FALSE;
+//        bLowSensor := FALSE;
+//    END_IF
+//END_IF
+
+//IF bDrainValve THEN
+//    tElapsedDrainTime := fbDrainTimer.ET;
+//    IF fbDrainTimer.Q THEN
+//        bHighSensor := FALSE;
+//        bLowSensor := TRUE;
+		
+//		fbDButton(bIsButtonOff := TRUE);
+//    ELSE
+//        bHighSensor := FALSE;
+//        bLowSensor := FALSE;
+//    END_IF
+//END_IF
+
+//fbFillTimer(PT := tFillTime);
+//fbDrainTimer(PT := tDrainTime);
+
+//fbVisTimer1(PT := T#2S);
+//fbVisTimer2(PT := T#4S);]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Tank">
+      <LineId Id="3889" Count="31" />
+      <LineId Id="5000" Count="0" />
+      <LineId Id="5026" Count="10" />
+      <LineId Id="5004" Count="0" />
+      <LineId Id="3921" Count="2" />
+      <LineId Id="5042" Count="0" />
+      <LineId Id="5051" Count="0" />
+      <LineId Id="5053" Count="0" />
+      <LineId Id="5052" Count="0" />
+      <LineId Id="5045" Count="1" />
+      <LineId Id="5043" Count="1" />
+      <LineId Id="3924" Count="13" />
+      <LineId Id="5007" Count="0" />
+      <LineId Id="5021" Count="4" />
+      <LineId Id="5009" Count="0" />
+      <LineId Id="5020" Count="0" />
+      <LineId Id="5010" Count="3" />
+      <LineId Id="5008" Count="0" />
+      <LineId Id="3938" Count="2" />
+      <LineId Id="5047" Count="2" />
+      <LineId Id="5037" Count="0" />
+      <LineId Id="5040" Count="1" />
+      <LineId Id="5038" Count="1" />
+      <LineId Id="3941" Count="28" />
+      <LineId Id="3998" Count="0" />
+      <LineId Id="4001" Count="1" />
+      <LineId Id="3999" Count="0" />
+      <LineId Id="4003" Count="9" />
+      <LineId Id="5055" Count="2" />
+      <LineId Id="5054" Count="0" />
+      <LineId Id="5059" Count="2" />
+      <LineId Id="5058" Count="0" />
+      <LineId Id="4000" Count="0" />
+      <LineId Id="4956" Count="0" />
+      <LineId Id="3971" Count="24" />
+      <LineId Id="5015" Count="0" />
+      <LineId Id="5014" Count="0" />
+      <LineId Id="5065" Count="0" />
+      <LineId Id="5620" Count="1" />
+      <LineId Id="5823" Count="10" />
+      <LineId Id="5622" Count="146" />
+      <LineId Id="5804" Count="0" />
+      <LineId Id="5807" Count="15" />
+      <LineId Id="5805" Count="1" />
+      <LineId Id="5769" Count="6" />
+      <LineId Id="5800" Count="1" />
+      <LineId Id="5776" Count="10" />
+      <LineId Id="5802" Count="1" />
+      <LineId Id="5787" Count="9" />
+      <LineId Id="5619" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{487d2b30-aca7-4d70-bcc8-562be4c283ec}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbSlicer : FB_Slicer;
+	bStartButton : BOOL;
+	fM1Position : LREAL;
+	fM1sPosition : LREAL;
+	fM2Position : LREAL;
+	nErrorID : UDINT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbSlicer(bStartButton := bStartButton,
+		 fM1Position => fM1Position,
+		 fM1sPosition => fM1sPosition,
+		 fM2Position => fM2Position,
+		 nErrorID => nErrorID);]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="14" Count="2" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="20" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

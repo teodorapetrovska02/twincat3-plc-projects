@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_ToggleButton" Id="{01df59ea-0cbb-471a-9285-fb67bdce7be4}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ToggleButton
+VAR_INPUT
+	bIsToggleButtonOn : BOOL;
+END_VAR
+VAR_OUTPUT
+	bLightOfToggleButton : BOOL;
+END_VAR
+VAR
+	fbToggle_RTRIG : R_TRIG;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// When a button is clicked, turn light on if it was off, or turn light off if it was on
+fbToggle_RTRIG(clk := bIsToggleButtonOn);
+IF fbToggle_RTRIG.Q THEN
+	bLightOfToggleButton := NOT bLightOfToggleButton;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_ToggleButton">
+      <LineId Id="25" Count="0" />
+      <LineId Id="101" Count="3" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

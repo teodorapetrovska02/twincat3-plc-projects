@@ -1,0 +1,64 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_Blinker" Id="{cc71e1f8-2211-42c6-a262-cb5ef868cbc4}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Blinker
+VAR_INPUT
+	bIsStartPressed : BOOL;
+	dwTimeOn : DWORD;
+	dwTimeOff : DWORD;
+END_VAR
+VAR_OUTPUT
+	bLight : BOOL;	// Determines whether the light will be ON or OFF
+END_VAR
+VAR
+	fbTimerOn : TON;
+	fbTimerOff : TON;
+	fbStartTrigger : R_TRIG;
+	
+	bCurrentPhase : BOOL;	// Tracks whether we are in the ON phase or OFF phase
+	bIsBlinking : bool;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Detect whether the start button is pressed
+fbStartTrigger(CLK := bIsStartPressed);
+IF fbStartTrigger.Q THEN
+    bIsBlinking := NOT bIsBlinking; // Toggle the blinking state (start or stop blinking)
+END_IF
+
+IF bIsBlinking THEN
+    IF bCurrentPhase THEN
+        // Start the on timer
+        fbTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwTimeOn));
+        IF fbTimerOn.Q THEN
+            bCurrentPhase := FALSE;
+            fbTimerOn(IN := FALSE); // Reset the on timer
+        END_IF
+        bLight := TRUE;
+    ELSE
+        // Start the off timer
+        fbTimerOff(IN := TRUE, PT := DWORD_TO_TIME(dwTimeOff));
+        IF fbTimerOff.Q THEN
+            bCurrentPhase := TRUE;
+            fbTimerOff(IN := FALSE); // Reset the off timer
+        END_IF
+        bLight := FALSE;
+    END_IF
+ELSE
+    // Reset timers and light when blinking is not active
+    fbTimerOn(IN := FALSE);
+    fbTimerOff(IN := FALSE);
+    bLight := FALSE;
+    bCurrentPhase := TRUE;
+END_IF
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Blinker">
+      <LineId Id="160" Count="1" />
+      <LineId Id="163" Count="23" />
+      <LineId Id="211" Count="1" />
+      <LineId Id="189" Count="2" />
+      <LineId Id="34" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

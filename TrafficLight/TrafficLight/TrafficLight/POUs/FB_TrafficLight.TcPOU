@@ -1,0 +1,246 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_TrafficLight" Id="{5b872170-1d0d-4264-942c-bbdbe2d1269e}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TrafficLight
+VAR_INPUT
+	bIsStartPressed AT %I* : BOOL;
+	bIsStopPressed AT %I* : BOOL;
+	bIsBlinkPressed AT %I* : BOOL;
+
+	dwRedTimeOn : DWORD;	// Duration for red light on
+
+	dwRedAndYellowTimeOn : DWORD;	
+
+	dwGreenTimeOn : DWORD;
+	
+	dwGreenBlinkingDuration : DWORD;
+	dwGreenBlinkingTimeOn : DWORD;
+	dwGreenBlinkingTimeOff : DWORD;
+	
+	dwYellowTimeOn : DWORD;
+	
+	dwYellowBlinkingTimeOn : DWORD;
+	dwYellowBlinkingTimeOff : DWORD;
+END_VAR
+VAR_OUTPUT
+	bTurnGreenLightOn AT %Q* : BOOL;
+	bTurnYellowLightOn AT %Q* : BOOL;
+	bTurnRedLightOn AT %Q* : BOOL;
+END_VAR
+VAR
+	fbRedTimerOn : TON;
+	
+	fbRedAndYellowTimerOn : TON;
+	
+	fbGreenTimerOn : TON;
+	
+	fbGreenBlinker : FB_Blinker;
+	fbGreenBlinkingTimerOn : TON;
+	fbGreenBlinkingTimerOff : TON;
+	
+	fbYellowTimerOn : TON;
+	
+	fbYellowBlinker : FB_Blinker;
+	
+	(* 0 - Yellow blinking; 50 - Initialization; 100 - Red; 
+	200 - Red + Yellow; 300 - Green; 400 - Yellow*)
+	eLightOrder : INT := 0;
+	
+	// In order to showcase the remaining time (countdown)
+	dwGreenTimeRemaining : DWORD;
+	dwRedTimeRemaining : DWORD;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE eLightOrder OF	
+	0:	// Yellow blinking
+		bTurnGreenLightOn := FALSE;
+        bTurnYellowLightOn := FALSE;
+        bTurnRedLightOn := FALSE;
+		
+		 // Check if the start button is pressed to start the traffic light 
+        IF bIsStartPressed THEN
+            eLightOrder := 100;
+		
+		// Go to initialization if stop button is pressed, if not turn on yellow blinker
+		ELSIF bIsStopPressed THEN
+        	eLightOrder := 50;
+		ELSE
+			fbYellowBlinker(dwTimeOn := dwYellowBlinkingTimeOn, dwTimeOff := dwYellowBlinkingTimeOff, bLight => bTurnYellowLightOn);
+		END_IF	
+	
+	50:			
+		// Initialization
+		bTurnGreenLightOn := FALSE;
+        bTurnYellowLightOn := FALSE;
+        bTurnRedLightOn := FALSE;
+		
+		// Reseting all timers
+		fbRedTimerOn(IN := FALSE);
+		fbRedAndYellowTimerOn(IN := FALSE);
+		fbGreenTimerOn(IN := FALSE);
+		fbGreenBlinkingTimerOn(IN := FALSE);
+		fbGreenBlinkingTimerOff(IN := FALSE);
+		fbYellowTimerOn(IN := FALSE);
+        
+        // Check if the start button is pressed to start the traffic light 
+        IF bIsStartPressed THEN
+            eLightOrder := 100;
+        END_IF
+		
+		// Check if the blink button is pressed to start the yellow light blinking
+		IF bIsBlinkPressed THEN
+            eLightOrder := 0;
+        END_IF
+
+	100:	// Red
+		IF bIsStopPressed THEN
+            eLightOrder := 50;
+		ELSIF bIsBlinkPressed THEN
+            eLightOrder := 0;
+        ELSE
+			bTurnGreenLightOn := FALSE;
+			bTurnYellowLightOn := FALSE;
+			bTurnRedLightOn := TRUE;
+			
+			// Start red light timer
+			fbRedTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwRedTimeOn));
+			dwRedTimeRemaining := TIME_TO_DWORD((fbRedTimerOn.PT - fbRedTimerOn.ET) / 1000);
+			
+			// Transition to next state when timer elapses
+			IF fbRedTimerOn.Q THEN
+				fbRedTimerOn(IN := FALSE);
+				eLightOrder := 200;
+			END_IF
+		END_IF
+	
+	200:	// Red + Yellow
+		IF bIsStopPressed THEN
+            eLightOrder := 50;
+		ELSIF bIsBlinkPressed THEN
+            eLightOrder := 0;
+        ELSE
+			bTurnGreenLightOn := FALSE;
+			bTurnYellowLightOn := TRUE;
+			bTurnRedLightOn := TRUE;
+			
+			// Start red and yellow light timer
+			fbRedAndYellowTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwRedAndYellowTimeOn));
+			
+			// Transition to next state when timer elapses
+			IF fbRedAndYellowTimerOn.Q THEN
+				fbRedAndYellowTimerOn(IN := FALSE);
+				eLightOrder := 300;
+			END_IF
+		END_IF
+	
+	300:	// Green
+		IF bIsStopPressed THEN
+            eLightOrder := 50;
+		ELSIF bIsBlinkPressed THEN
+            eLightOrder := 0;
+        ELSE
+			bTurnGreenLightOn := TRUE;
+			bTurnYellowLightOn := FALSE;
+			bTurnRedLightOn := FALSE;
+			
+			// Start green light timer
+			fbGreenTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwGreenTimeOn));
+			dwGreenTimeRemaining := TIME_TO_DWORD((fbGreenTimerOn.PT - fbGreenTimerOn.ET) / 1000);
+			
+			// Transition to next state when timer elapses
+			IF fbGreenTimerOn.Q THEN
+				fbGreenTimerOn(IN := FALSE);
+				eLightOrder := 400;
+			END_IF
+		END_IF
+		
+	400:	// Yellow
+		IF bIsStopPressed THEN
+            eLightOrder := 50;
+		ELSIF bIsBlinkPressed THEN
+            eLightOrder := 0;
+        ELSE
+			bTurnGreenLightOn := FALSE;
+			bTurnYellowLightOn := TRUE;
+			bTurnRedLightOn := FALSE;
+			
+			// Start yellow light timer
+			fbYellowTimerOn(IN := TRUE, PT := DWORD_TO_TIME(dwYellowTimeOn));
+			
+			// Transition to next state when timer elapses
+			IF fbYellowTimerOn.Q THEN
+				fbYellowTimerOn(IN := FALSE);
+				eLightOrder := 100;
+			END_IF
+		END_IF
+ELSE	// There is some fault - yellow blinking
+	eLightOrder := 0;
+END_CASE]]></ST>
+    </Implementation>
+    <LineIds Name="FB_TrafficLight">
+      <LineId Id="9" Count="0" />
+      <LineId Id="612" Count="0" />
+      <LineId Id="728" Count="12" />
+      <LineId Id="604" Count="0" />
+      <LineId Id="727" Count="0" />
+      <LineId Id="605" Count="0" />
+      <LineId Id="706" Count="20" />
+      <LineId Id="705" Count="0" />
+      <LineId Id="418" Count="0" />
+      <LineId Id="88" Count="0" />
+      <LineId Id="476" Count="1" />
+      <LineId Id="618" Count="0" />
+      <LineId Id="620" Count="0" />
+      <LineId Id="475" Count="0" />
+      <LineId Id="370" Count="0" />
+      <LineId Id="105" Count="0" />
+      <LineId Id="103" Count="0" />
+      <LineId Id="635" Count="0" />
+      <LineId Id="106" Count="1" />
+      <LineId Id="181" Count="1" />
+      <LineId Id="636" Count="0" />
+      <LineId Id="109" Count="2" />
+      <LineId Id="108" Count="0" />
+      <LineId Id="478" Count="0" />
+      <LineId Id="46" Count="1" />
+      <LineId Id="480" Count="1" />
+      <LineId Id="621" Count="1" />
+      <LineId Id="479" Count="0" />
+      <LineId Id="113" Count="3" />
+      <LineId Id="637" Count="0" />
+      <LineId Id="117" Count="0" />
+      <LineId Id="638" Count="1" />
+      <LineId Id="118" Count="2" />
+      <LineId Id="112" Count="0" />
+      <LineId Id="482" Count="0" />
+      <LineId Id="48" Count="1" />
+      <LineId Id="484" Count="1" />
+      <LineId Id="623" Count="1" />
+      <LineId Id="483" Count="0" />
+      <LineId Id="124" Count="3" />
+      <LineId Id="640" Count="0" />
+      <LineId Id="128" Count="0" />
+      <LineId Id="183" Count="0" />
+      <LineId Id="641" Count="1" />
+      <LineId Id="331" Count="2" />
+      <LineId Id="329" Count="0" />
+      <LineId Id="486" Count="0" />
+      <LineId Id="334" Count="0" />
+      <LineId Id="51" Count="0" />
+      <LineId Id="492" Count="1" />
+      <LineId Id="627" Count="1" />
+      <LineId Id="491" Count="0" />
+      <LineId Id="133" Count="3" />
+      <LineId Id="647" Count="0" />
+      <LineId Id="137" Count="0" />
+      <LineId Id="648" Count="1" />
+      <LineId Id="138" Count="2" />
+      <LineId Id="132" Count="0" />
+      <LineId Id="494" Count="0" />
+      <LineId Id="141" Count="0" />
+      <LineId Id="498" Count="0" />
+      <LineId Id="43" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,59 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_OnAndOffButtons" Id="{93fa715c-cb09-4f2b-8ea8-c58272dd4677}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_OnAndOffButtons
+VAR_INPUT
+	bIsButtonOn : BOOL;
+	bIsButtonOff : BOOL;
+END_VAR
+VAR_OUTPUT
+	bLightOfOnAndOffButton : BOOL;
+END_VAR
+VAR
+	fbOn_RTRIG : R_TRIG;
+	fbOff_RTRIG : R_TRIG;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// One button turns the light on, the other turns it off
+IF bIsButtonOn THEN
+	bLightOfOnAndOffButton := TRUE;
+	bIsButtonOff := FALSE;
+END_IF
+
+IF bIsButtonOff THEN
+	bLightOfOnAndOffButton := FALSE;
+	bIsButtonOn := FALSE;
+END_IF
+
+// Solution using triggers:
+//fbOn_RTRIG(clk := bIsButtonOn);
+//IF fbOn_RTRIG.Q THEN
+//	bLightOfOnAndOffButton := TRUE;
+//	fbOn_RTRIG(clk := FALSE);
+//END_IF
+
+//fbOff_RTRIG(clk := bIsButtonOff);
+//IF fbOff_RTRIG.Q THEN
+//	bLightOfOnAndOffButton := FALSE;
+//	fbOff_RTRIG(clk := FALSE);
+//END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_OnAndOffButtons">
+      <LineId Id="26" Count="0" />
+      <LineId Id="84" Count="0" />
+      <LineId Id="86" Count="0" />
+      <LineId Id="88" Count="0" />
+      <LineId Id="87" Count="0" />
+      <LineId Id="90" Count="0" />
+      <LineId Id="89" Count="0" />
+      <LineId Id="91" Count="0" />
+      <LineId Id="93" Count="0" />
+      <LineId Id="92" Count="0" />
+      <LineId Id="95" Count="0" />
+      <LineId Id="94" Count="0" />
+      <LineId Id="97" Count="9" />
+      <LineId Id="96" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

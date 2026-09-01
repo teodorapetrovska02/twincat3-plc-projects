@@ -1,0 +1,514 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_DoorController" Id="{f7797383-0d20-4206-951a-704243bc5be7}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_DoorController
+VAR_INPUT
+	// Button that starts the door
+	bActuation : BOOL;
+	
+	// Button that makes the door go into a drive overload
+	bDriveOverload : BOOL;
+	
+	// Position where the door reaches it's maximum (it's opened)
+	fMaxPosition : LREAL;
+	
+	// How much time (in ms) should pass in order for the light to turn off when the door has opened / closed 
+	dwLightDelay : DWORD;
+	
+	// On/off times (in miliseconds) for when the garage door light is blinking in state of error
+	dwBlinkingTimeOn : DWORD;
+	dwBlinkingTimeOff : DWORD;
+END_VAR
+VAR_OUTPUT
+	// Outputs sent to actuators stating that the door is moving up / down
+	bDoorUp : BOOL;
+	bDoorDown : BOOL;
+	
+	// Actual position of the axis
+	fActualPosition : LREAL;
+	
+	// Indicates whether the door light should be on or off
+	bDoorLight : BOOL;
+	
+	// Lights that turn on if the door is opened / closed
+	bOpeningLight : BOOL;
+	bClosingLight : BOOL := TRUE;
+	
+	// Variable that'll tell me if I'm in an error state or not
+	bNoError : BOOL := TRUE;
+	// Displaying a message according to the error we are encountering
+	sErrorMessage : STRING;
+END_VAR
+VAR
+	// Variables stating whether the door is opened or closed
+	bDoorOpen : BOOL;
+	bDoorClosed : BOOL := TRUE;	// Assumption that in the beginning the door is closed
+	
+	// TRUE when the process was paused during opening / closing
+	bPauseWhenOpening : BOOL;
+	bPauseWhenClosing : BOOL;
+
+	(* Timer needed for turning the door light off after a certain period of time passes 
+	after the door has been opened / closed *)
+	fbLightTimer : TON;
+	
+	// Trigger functions to deal with bouncing
+	fbActuation : R_TRIG;
+	fbDriveOverloadButton : R_TRIG;
+	
+	// Reference to the axis and adequate funcion blocks needed for the axis
+	AxisGarage : AXIS_REF;
+	McPower : MC_Power;
+	McReset : MC_Reset;
+	McMoveAbsolute : MC_MoveAbsolute;
+	McStop : MC_Stop;
+
+	
+	(* Instance of the BlinkingLight FB needed for the blinking of the actuation button 
+	when it goes to an error state *)
+	fbBlinkingLight : FB_BlinkingLight;
+	
+	// Variable needed for initializing the CASE structure states
+	nCurrentState : DINT;
+	
+	// Variables stating which errors we are encountering
+	bDriveError : BOOL;
+	bMcError : BOOL;
+	nMcErrorID : UDINT;
+	
+	(* Temporary variable that helps me overcome a problem I'm facing due to
+	   bActuation being a tapper *)
+	bPom : BOOL;
+	
+	// Variables needed only for the visualization
+	bRect1 : BOOL;
+	bRect2 : BOOL;
+	bRect3 : BOOL;
+	bRect4 : BOOL;
+	
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* This FB is intended to manage the operation of a garage door. It processes inputs
+   from the button bActuation and it handles drive overloads (bDriveOverload). The block 
+   controls the movement of the door (bDoorUp, bDoorDown), the activation of lights 
+   (bDoorLight, bOpeningLight, bClosingLight), and transitions between different states 
+   (idle, opening, closing, error). The FB also manages the timing for the door's lights, 
+   espeially when they need to blink in case of errors. Additionally, it tracks whether the 
+   door is fully opened or fully closed, handles pauses during opening or closing, and 
+   displays error messages when needed. *)
+
+// Rising edge logic in order to stop bouncing (the signal persisting longer than intended)
+fbActuation(CLK := bActuation);
+bActuation := fbActuation.Q;
+fbDriveOverloadButton(CLK := bDriveOverload);
+bDriveOverload := fbDriveOverloadButton.Q;
+
+CASE nCurrentState OF
+	
+	0:	// Idle
+	(* The door is at rest. If the actuation button is pressed, the door either opens 
+	   (if closed) or closes (if open). It also checks for a drive overload to 
+	   transition into an error state. *)
+	
+	// If the overload sensor is activated, go to the error state
+	IF bDriveOverload THEN
+		bDriveError := TRUE;
+		nCurrentState := 999;
+	END_IF
+	
+	IF McPower.Error THEN
+		bMcError := TRUE;
+		nMcErrorID := McPower.ErrorID;
+		nCurrentState := 999;
+	END_IF
+	
+	// Reseting
+	fbLightTimer.IN := FALSE;
+	bDoorLight := FALSE;
+	
+	// If the axis is ready for operation
+	IF McPower.Status THEN
+		// If the actuation button is pressed and the door is closed -> open it
+		IF bActuation AND (bDoorClosed OR bPauseWhenClosing) THEN
+			nCurrentState := 100;
+		// If the actuation button is pressed and the door is opened -> close it
+		ELSIF bActuation AND (bDoorOpen OR bPauseWhenOpening) THEN
+			nCurrentState := 200;
+		END_IF
+	END_IF
+	
+	100:	// Opening
+	(* The door is moving upwards. It activates the appropriate light and monitors for
+	   errors like drive overload or the close button being pressed. If the door reaches 
+	   the fully open position, it sets the bDoorOpen flag to TRUE, stops the opening 
+	   process, and returns to the idle state. If an error occurs, it pauses the opening 
+	   and transitions to the error state. *)
+	
+	(* If the overload sensor is activated or if the close button is pressed, go to the error state. 
+	   bPauseWhenClosing is true because I want to continue with opening after I get out of the error state *)
+	IF bDriveOverload OR McMoveAbsolute.Error THEN
+		IF bDriveOverload THEN
+			bdriveError := TRUE;	
+		ELSIF McMoveAbsolute.Error THEN
+			bMcError := TRUE;
+			nMcErrorID := McPower.ErrorID;
+		END_IF
+		
+		bPauseWhenOpening := FALSE;
+		bPauseWhenClosing := TRUE;
+		nCurrentState := 999;
+	END_IF
+	
+	// RESET EVERYTHING THAT'S GOTTA DO WITH CLOSING HERE
+	bDoorDown := FALSE;
+	bDoorClosed := FALSE;
+	bPauseWhenClosing := FALSE;
+	bClosingLight := FALSE;
+	
+	// State that the door should go up and turn the light on
+	bDoorUp := TRUE;
+	bDoorLight := TRUE;
+
+	// Start moving the door	
+	McMoveAbsolute(Axis := AxisGarage,
+				   Execute := TRUE,
+				   Position := fMaxPosition,
+				   Velocity := 10,
+				   Acceleration := 10,
+				   Deceleration := 10,
+				   Jerk := 1000000);
+				   
+	// If the target position is reached, turn the axis off and state that the door is opened
+	IF McMoveAbsolute.Done THEN
+		McMoveAbsolute(Axis := AxisGarage,Execute := FALSE);
+		bDoorOpen := TRUE;
+		bOpeningLight := TRUE;
+		
+		// Timer logic for turning the door light off
+		fbLightTimer.IN := TRUE;
+		IF fbLightTimer.Q THEN
+			bDoorLight := FALSE;
+			nCurrentState := 0;
+		END_IF	
+	END_IF
+	
+	// The opening is paused -> go to idle state
+	IF bActuation OR bPom THEN
+		bPom := TRUE;
+		McStop(Axis := AxisGarage,
+			   Deceleration := 20,
+			   Execute := TRUE);
+			   
+		bPauseWhenOpening := TRUE;
+		bOpeningLight := FALSE;
+		
+		IF McStop.Done THEN
+			McStop(Axis := AxisGarage, Execute := FALSE);
+			McMoveAbsolute(Axis := AxisGarage, Execute := FALSE);
+				
+			fbLightTimer.IN := TRUE;
+			IF fbLightTimer.Q THEN
+				bPom := FALSE;
+				bDoorLight := FALSE;
+				nCurrentState := 0;
+			END_IF
+		END_IF
+	END_IF
+	
+	200:	// Closing
+	(* The door is moving downwards. It manages the closing light and checks for errors
+	   such as the open button being pressed or a drive overload. If the door reaches the 
+	   fully closed position, it sets the bDoorClosed flag to TRUE, stops the closing 
+	   process, and returns to the idle state. Similar to the opening state, any error 
+	   pauses the closing process and transitions to the error state. *)
+	
+	(* If the overload sensor is activated or if the open button is pressed, go to the error state. 
+	   bPauseWhenOpening is true because I want to continue with closing after I get out of the error state *)
+	IF bDriveOverload OR McMoveAbsolute.Error THEN
+		IF bDriveOverload THEN
+			bdriveError := TRUE;	
+		ELSIF McMoveAbsolute.Error THEN
+			bMcError := TRUE;
+			nMcErrorID := McPower.ErrorID;
+		END_IF
+		
+		bPauseWhenOpening := TRUE;
+		bPauseWhenClosing := FALSE;
+		nCurrentState := 999;
+	END_IF
+	
+	// RESET EVERYTHING THAT'S GOTTA DO WITH OPENING HERE
+	bDoorUp := FALSE;
+	bDoorOpen := FALSE;
+	bPauseWhenOpening := FALSE;
+	bOpeningLight := FALSE;
+	
+	// State that the door should go down and turn the light on
+	bDoorDown := TRUE;
+	bDoorLight := TRUE;
+	
+	// Start moving the door	
+	McMoveAbsolute(Axis := AxisGarage,
+				   Execute := TRUE,
+				   Position := 0,
+				   Velocity := 10,
+				   Acceleration := 10,
+				   Deceleration := 10,
+				   Jerk := 1000000);
+	
+	// If the target position is reached, turn the axis off and state that the door is closed
+	IF McMoveAbsolute.Done THEN
+		McMoveAbsolute(Axis := AxisGarage,Execute := FALSE);
+		bDoorClosed := TRUE;
+		bClosingLight := TRUE;
+		
+		// Timer logic for turning the door light off
+		fbLightTimer.IN := TRUE;
+		IF fbLightTimer.Q THEN
+			bDoorLight := FALSE;
+			nCurrentState := 0;
+		END_IF	
+	END_IF
+	
+	// The closing is paused -> go to idle state
+	IF bActuation OR bPom THEN
+		bPom := TRUE;
+		McStop(Axis := AxisGarage,
+			   Deceleration := 20,
+			   Execute := TRUE);
+			   
+		bPauseWhenClosing := TRUE;
+		bClosingLight := FALSE;
+		
+		IF McStop.Done THEN
+			McStop(Axis := AxisGarage, Execute := FALSE);
+			McMoveAbsolute(Axis := AxisGarage, Execute := FALSE);
+			
+			fbLightTimer.IN := TRUE;
+			IF fbLightTimer.Q THEN
+				bPom := FALSE;
+				bDoorLight := FALSE;
+				nCurrentState := 0;
+			END_IF
+		END_IF		
+	END_IF
+	
+	999:	// Error
+	(* The system has detected an error, such as a drive overload or conflicting 
+	   open/close commands. The door movement stops, and the light blinks to indicate 
+	   the error. The state persists until the actuation button is pressed again, 
+	   resetting the system and returning to idle. Error messages are displayed based 
+	   on the specific error encountered. *)
+	
+	bNoError := FALSE;
+	
+	IF bActuation THEN
+		bNoError := TRUE;
+		McStop(Axis := AxisGarage, Execute := FALSE);
+		McMoveAbsolute(Axis := AxisGarage, Execute := FALSE);
+		nCurrentState := 0;
+	END_IF
+	
+	fbBlinkingLight(dwTimeOn :=  dwBlinkingTimeOn, dwTimeOff := dwBlinkingTimeOff, bLight => bDoorLight);
+	
+	McStop(Axis := AxisGarage,
+		   Deceleration := 20,
+		   Execute := TRUE);
+	
+	// WRITE LOGIC TO STOP THE WHOLE PROCESS HERE (RESET EVERYTHING)
+	bDoorUp := FALSE;
+	bDoorDown := FALSE;
+	
+	IF McStop.Done THEN
+		McStop(Axis := AxisGarage, Execute := FALSE);
+		
+		// Write error messages for the appropriate errors
+		IF bDriveError THEN
+			bDriveError := FALSE;
+			sErrorMessage := 'Error ID XXXX: Drive overload!';
+		END_IF
+		
+		IF bMcError THEN
+			bMcError := FALSE;
+		// sErrorMessage := := CONCAT(CONCAT('Error ID: ', ' '), TO_STRING(nMcErrorID);
+		END_IF
+	END_IF
+	
+	
+	
+END_CASE
+
+AxisGarage.ReadStatus();
+
+McPower(Axis := AxisGarage,
+		Enable := TRUE,
+		Enable_Positive := TRUE,
+		Enable_Negative := TRUE);
+		
+McReset(Axis := AxisGarage);
+McMoveAbsolute(Axis := AxisGarage);
+McStop(Axis := AxisGarage);
+
+fActualPosition := AxisGarage.NcToPlc.ActPos;
+
+fbLightTimer(PT := TO_TIME(dwLightDelay));
+
+// Code only for visualization
+IF bDoorUp THEN
+	IF fActualPosition >= (fMaxPosition / 4) THEN
+		bRect1 := TRUE;
+	END_IF
+	IF fActualPosition >= (2 * (fMaxPosition / 4)) THEN
+		bRect2 := TRUE;
+	END_IF
+	IF fActualPosition >= (3 * (fMaxPosition / 4)) THEN
+		bRect3 := TRUE;
+	END_IF
+	IF fActualPosition >= fMaxPosition THEN
+		bRect4 := TRUE;
+	END_IF
+END_IF
+
+IF bDoorDown THEN
+	IF fActualPosition <= (3 * (fMaxPosition / 4)) THEN
+		bRect4 := FALSE;
+	END_IF
+	IF fActualPosition <= (2 * (fMaxPosition / 4)) THEN
+		bRect3 := FALSE;
+	END_IF
+	IF fActualPosition <= (fMaxPosition / 4) THEN
+		bRect2 := FALSE;
+	END_IF
+	IF fActualPosition <= 0 THEN
+		bRect1 := FALSE;
+	END_IF
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_DoorController">
+      <LineId Id="10" Count="1" />
+      <LineId Id="731" Count="5" />
+      <LineId Id="19" Count="3" />
+      <LineId Id="27" Count="11" />
+      <LineId Id="590" Count="0" />
+      <LineId Id="39" Count="1" />
+      <LineId Id="591" Count="2" />
+      <LineId Id="597" Count="1" />
+      <LineId Id="594" Count="0" />
+      <LineId Id="41" Count="3" />
+      <LineId Id="302" Count="0" />
+      <LineId Id="401" Count="0" />
+      <LineId Id="47" Count="0" />
+      <LineId Id="395" Count="5" />
+      <LineId Id="387" Count="1" />
+      <LineId Id="55" Count="12" />
+      <LineId Id="599" Count="0" />
+      <LineId Id="602" Count="1" />
+      <LineId Id="70" Count="9" />
+      <LineId Id="659" Count="0" />
+      <LineId Id="727" Count="0" />
+      <LineId Id="80" Count="3" />
+      <LineId Id="417" Count="0" />
+      <LineId Id="85" Count="0" />
+      <LineId Id="403" Count="0" />
+      <LineId Id="411" Count="5" />
+      <LineId Id="418" Count="0" />
+      <LineId Id="424" Count="0" />
+      <LineId Id="419" Count="0" />
+      <LineId Id="423" Count="0" />
+      <LineId Id="420" Count="0" />
+      <LineId Id="435" Count="0" />
+      <LineId Id="425" Count="0" />
+      <LineId Id="432" Count="0" />
+      <LineId Id="427" Count="1" />
+      <LineId Id="430" Count="1" />
+      <LineId Id="426" Count="0" />
+      <LineId Id="421" Count="0" />
+      <LineId Id="105" Count="2" />
+      <LineId Id="661" Count="0" />
+      <LineId Id="469" Count="1" />
+      <LineId Id="108" Count="0" />
+      <LineId Id="523" Count="0" />
+      <LineId Id="521" Count="0" />
+      <LineId Id="110" Count="0" />
+      <LineId Id="637" Count="0" />
+      <LineId Id="639" Count="5" />
+      <LineId Id="662" Count="0" />
+      <LineId Id="645" Count="1" />
+      <LineId Id="638" Count="0" />
+      <LineId Id="647" Count="0" />
+      <LineId Id="689" Count="0" />
+      <LineId Id="120" Count="12" />
+      <LineId Id="606" Count="1" />
+      <LineId Id="605" Count="0" />
+      <LineId Id="135" Count="9" />
+      <LineId Id="660" Count="0" />
+      <LineId Id="726" Count="0" />
+      <LineId Id="145" Count="3" />
+      <LineId Id="473" Count="0" />
+      <LineId Id="475" Count="6" />
+      <LineId Id="474" Count="0" />
+      <LineId Id="153" Count="0" />
+      <LineId Id="482" Count="3" />
+      <LineId Id="487" Count="11" />
+      <LineId Id="663" Count="0" />
+      <LineId Id="499" Count="2" />
+      <LineId Id="522" Count="0" />
+      <LineId Id="518" Count="1" />
+      <LineId Id="648" Count="0" />
+      <LineId Id="650" Count="5" />
+      <LineId Id="664" Count="0" />
+      <LineId Id="656" Count="2" />
+      <LineId Id="649" Count="0" />
+      <LineId Id="520" Count="0" />
+      <LineId Id="504" Count="0" />
+      <LineId Id="184" Count="0" />
+      <LineId Id="187" Count="9" />
+      <LineId Id="586" Count="1" />
+      <LineId Id="197" Count="3" />
+      <LineId Id="580" Count="0" />
+      <LineId Id="584" Count="1" />
+      <LineId Id="583" Count="0" />
+      <LineId Id="201" Count="3" />
+      <LineId Id="822" Count="1" />
+      <LineId Id="835" Count="0" />
+      <LineId Id="837" Count="0" />
+      <LineId Id="826" Count="8" />
+      <LineId Id="824" Count="1" />
+      <LineId Id="205" Count="0" />
+      <LineId Id="611" Count="0" />
+      <LineId Id="221" Count="1" />
+      <LineId Id="525" Count="0" />
+      <LineId Id="524" Count="0" />
+      <LineId Id="535" Count="0" />
+      <LineId Id="534" Count="0" />
+      <LineId Id="537" Count="6" />
+      <LineId Id="547" Count="0" />
+      <LineId Id="531" Count="0" />
+      <LineId Id="223" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="667" Count="0" />
+      <LineId Id="665" Count="0" />
+      <LineId Id="696" Count="0" />
+      <LineId Id="700" Count="1" />
+      <LineId Id="698" Count="0" />
+      <LineId Id="703" Count="1" />
+      <LineId Id="702" Count="0" />
+      <LineId Id="706" Count="1" />
+      <LineId Id="705" Count="0" />
+      <LineId Id="709" Count="1" />
+      <LineId Id="708" Count="0" />
+      <LineId Id="699" Count="0" />
+      <LineId Id="712" Count="0" />
+      <LineId Id="711" Count="0" />
+      <LineId Id="715" Count="1" />
+      <LineId Id="713" Count="0" />
+      <LineId Id="718" Count="1" />
+      <LineId Id="717" Count="0" />
+      <LineId Id="721" Count="1" />
+      <LineId Id="720" Count="0" />
+      <LineId Id="724" Count="1" />
+      <LineId Id="723" Count="0" />
+      <LineId Id="714" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>
