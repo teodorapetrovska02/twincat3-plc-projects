@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# GitHub Linguist: recognize TwinCAT PLC files as Structured Text
+*.TcPOU linguist-language=Structured Text
+*.TcDUT linguist-language=Structured Text
+*.TcGVL linguist-language=Structured Text
